@@ -3,7 +3,7 @@ name: Build Windows Releases
 on:
   push:
     branches:
-      - master
+      - zh_CN
       - actions
     tags:
       - '*'
@@ -121,7 +121,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         id: check_ver
         run: |
-          powershell "$ver = (Get-ItemProperty .\NVEncC_Release\NVEncC*.exe).VersionInfo.FileVersion; if ($ver -eq '${{ needs.get_version_name.outputs.version_name }}') { exit 0; } exit 1;"
+          powershell "$ver = (Get-ItemProperty .\NVEncC_Release\NVEncC*.exe).VersionInfo.FileVersion; if ($ver -eq ) { exit 0; } exit 1;"
 
       - name: Calc hash
         id: calc_hash
@@ -217,52 +217,59 @@ jobs:
       - name: Create package
         id: archieve
         run: |
-          mkdir Aviutl_NVEnc_release
-          7z x -oAviutl_NVEnc_release\ auo_setup.zip
-          mkdir Aviutl_NVEnc_release\exe_files\NVEncC
-          mkdir Aviutl_NVEnc_release\exe_files\NVEncC\x86
-          mkdir Aviutl_NVEnc_release\exe_files\NVEncC\x64
-          7z x -oAviutl_NVEnc_release\exe_files\NVEncC\x86\ NVEncC_${{ needs.get_version_name.outputs.version_name }}_Win32.7z
-          7z x -oAviutl_NVEnc_release\exe_files\NVEncC\x64\ NVEncC_${{ needs.get_version_name.outputs.version_name }}_x64.7z
-          copy /y _build\Win32\Release\NVEnc.auo Aviutl_NVEnc_release\plugins\
-          copy /y NVEnc\NVEnc.ini Aviutl_NVEnc_release\plugins\
-          copy /y NVEnc\NVEnc.en.ini Aviutl_NVEnc_release\plugins\
-          copy /y NVEnc\NVEnc.zh.ini Aviutl_NVEnc_release\plugins\
-          copy /y NVEnc\auo_setup.ini Aviutl_NVEnc_release\exe_files\
-          copy /y NVEnc\NVEnc_readme.txt Aviutl_NVEnc_release\
-          copy /y "NVEnc\NVENCが利用可能か確認 [ダブルクリック].bat" Aviutl_NVEnc_release\
-          echo D | xcopy /y /e NVEnc\stg Aviutl_NVEnc_release\plugins\NVEnc_stg
-          dir /b /s Aviutl_NVEnc_release\
-          7z a -mx9 Aviutl_NVEnc_${{ needs.get_version_name.outputs.version_name }}.zip .\Aviutl_NVEnc_release\*
+          mkdir NVEnc_release
+          7z x -oNVEnc_release\ auo_setup.zip
+          mkdir NVEnc_release\exe_files\NVEncC
+          mkdir NVEnc_release\exe_files\NVEncC\x86
+          mkdir NVEnc_release\exe_files\NVEncC\x64
+          7z x -oNVEnc_release\exe_files\NVEncC\x86\ NVEncC_${{ needs.get_version_name.outputs.version_name }}_Win32.7z
+          7z x -oNVEnc_release\exe_files\NVEncC\x64\ NVEncC_${{ needs.get_version_name.outputs.version_name }}_x64.7z
+          copy /y _build\Win32\Release\NVEnc.auo NVEnc_release\plugins\
+          copy /y NVEnc\NVEnc.ini NVEnc_release\plugins\
+          copy /y NVEnc\NVEnc.en.ini NVEnc_release\plugins\
+          copy /y NVEnc\NVEnc.zh.ini NVEnc_release\plugins\
+          copy /y NVEnc\auo_setup.ini NVEnc_release\exe_files\
+          copy /y NVEnc\NVEnc_readme.txt NVEnc_release\
+          copy /y "NVEnc\NVENCが利用可能か確認 [ダブルクリック].bat" NVEnc_release\
+          echo D | xcopy /y /e NVEnc\stg NVEnc_release\plugins\NVEnc_stg
+          dir /b /s NVEnc_release\
+          7z a -mx9 NVEnc.zip .\NVEnc_release\*
 
       - name: Check Version
         id: check_ver
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          powershell "$ver = (Get-ItemProperty .\Aviutl_NVEnc_release\plugins\NVEnc.auo).VersionInfo.FileVersion; if ($ver -eq '${{ needs.get_version_name.outputs.version_name }}') { exit 0; } exit 1;"
+          powershell "$ver = (Get-ItemProperty .\NVEnc_release\plugins\NVEnc.auo).VersionInfo.FileVersion; if ($ver -eq ) { exit 0; } exit 1;"
 
       - name: Check dll
         id: check_dll
         run: |
-          "Aviutl_NVEnc_release\exe_files\NVEncC\x86\NVEncC.exe" --check-avcodec-dll
-          "Aviutl_NVEnc_release\exe_files\NVEncC\x64\NVEncC64.exe" --check-avcodec-dll
+          "NVEnc_release\exe_files\NVEncC\x86\NVEncC.exe" --check-avcodec-dll
+          "NVEnc_release\exe_files\NVEncC\x64\NVEncC64.exe" --check-avcodec-dll
 
       - name: Calc hash
         id: calc_hash
         run: |
-          7z h -scrc* Aviutl_NVEnc_${{ needs.get_version_name.outputs.version_name }}.zip
+          7z h -scrc* NVEnc.zip
+
+      - name: release
+        uses: actions/create-release@v1
+        id: create_release
+        with:
+          draft: false
+          prerelease: false
+          release_name: latest version
+          tag_name: new
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Upload Release Asset
         id: upload-release-asset 
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          files: Aviutl_NVEnc_${{ needs.get_version_name.outputs.version_name }}.zip
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Aviutl_NVEnc_${{ needs.get_version_name.outputs.version_name }}
-          path: Aviutl_NVEnc_${{ needs.get_version_name.outputs.version_name }}.zip
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./NVEnc.zip
+          asset_name: NVEnc.zip
+          asset_content_type: application/zip
