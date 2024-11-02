@@ -3,7 +3,7 @@ name: Build Windows Releases
 on:
   push:
     branches:
-            - zh_CN
+      - zh_CN
       - actions
     tags:
       - '*'
