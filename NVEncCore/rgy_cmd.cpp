@@ -386,7 +386,7 @@ static int getAttachmentTrackIdx(const RGYParamCommon *common, const int iTrack)
     return -1;
 }
 
-static std::vector<CX_DESC> get_libplacebo_only_resize_list() {
+std::vector<CX_DESC> get_libplacebo_only_resize_list() {
     std::vector<CX_DESC> libplacebo_resize_list;
     for (size_t i = 0; list_vpp_resize[i].desc; i++) {
         if (_tcsncmp(list_vpp_resize[i].desc, _T("libplacebo-"), _tcslen(_T("libplacebo-"))) == 0) {
@@ -8422,7 +8422,8 @@ tstring gen_cmd_help_input() {
         _T("      ignore_sar=<bool>                ignore sar when using negative value.\n")
         _T("\n")
         _T("   --frames <int>               frames to encode (based on input frames)\n")
-        _T("   --fps <int>/<int> or <float> set framerate\n")
+        _T("   --fps <int>/<int> or <float> set framerate when --raw is used.\n")
+        _T("                                  not recommended for other readers.\n");
         _T("   --interlace <string>         set input as interlaced\n")
         _T("                                  tff, bff\n");
     str += print_list_options(_T("--input-csp <string>           set input colorspace for raw reader"),
