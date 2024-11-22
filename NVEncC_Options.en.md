@@ -109,7 +109,7 @@
   - [--refs-backward \<int\> \[AV1\]](#--refs-backward-int-av1)
   - [--level \<string\>](#--level-string)
   - [--profile \<string\>](#--profile-string)
-  - [--tier \<string\>  \[HEVC only\]](#--tier-string--hevc-only)
+  - [--tier \<string\>](#--tier-string)
   - [--sar \<int\>:\<int\>](#--sar-intint)
   - [--dar \<int\>:\<int\>](#--dar-intint)
   - [--colorrange \<string\>](#--colorrange-string)
@@ -126,6 +126,7 @@
   - [--dolby-vision-profile \<string\> \[HEVC, AV1\]](#--dolby-vision-profile-string-hevc-av1)
   - [--dolby-vision-rpu \<string\> \[HEVC, AV1\]](#--dolby-vision-rpu-string-hevc-av1)
   - [--dolby-vision-rpu copy \[HEVC, AV1\]](#--dolby-vision-rpu-copy-hevc-av1)
+  - [--dolby-vision-rpu-prm \<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...](#--dolby-vision-rpu-prm-param1value1param2value2)
   - [--aud \[H.264/HEVC\]](#--aud-h264hevc)
   - [--repeat-headers](#--repeat-headers)
   - [--pic-struct \[H.264/HEVC\]](#--pic-struct-h264hevc)
@@ -818,8 +819,9 @@ Specify the Level of the codec to be encoded. If not specified, it will be autom
 ```
 h264: auto, 1, 1 b, 1.1, 1.2, 1.3, 2, 2.1, 2.2, 3, 3.1, 3.2, 4, 4.1, 4.2, 5, 5.1, 5.2
 hevc: auto, 1, 2, 2.1, 3, 3.1, 4, 4.1, 5, 5.1, 5.2, 6, 6.1, 6.2
-av1 :  auto, 2, 2.1, 2.2, 2.3, 3, 3.1, 3.2, 3.3, 4, 4.1, 4.2, 4.3, 5, 5.1, 5.2, 5.3, 6, 6.1, 6.2, 6.3, 7, 7.1, 7.2, 7.3
+av1 :  auto
 ```
+<!-- av1 :  auto, 2, 2.1, 2.2, 2.3, 3, 3.1, 3.2, 3.3, 4, 4.1, 4.2, 4.3, 5, 5.1, 5.2, 5.3, 6, 6.1, 6.2, 6.3, 7, 7.1, 7.2, 7.3 -->
 
 ### --profile &lt;string&gt;
 Specify the profile of the codec to be encoded. If not specified, it will be automatically set.
@@ -829,7 +831,7 @@ hevc:  auto, main, main10, main444
 av1 :  auto, main, high
 ```
 
-### --tier &lt;string&gt;  [HEVC only]
+### --tier &lt;string&gt;  
 Specify the tier of the codec.
 ```
 hevc:  main, high
@@ -926,6 +928,21 @@ Interleave Dolby Vision RPU metadata copied from HEVC input file. Recommended to
 
 Limitations for avhw reader: this option uses timestamps to reorder frames to decoded order to presentation order.
 Therefore, input files without timestamps (such as raw ES), are not supported. Please try for avsw reader for that case.
+
+### --dolby-vision-rpu-prm &lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...  
+
+Set parameters for ```--dolby-vision-rpu```.
+
+- **parameters**
+  
+  - crop=&lt;bool&gt;
+
+    Set active area offsets to 0 (no letterbox bars).
+
+- Examples
+  ```
+  Example:  --dolby-vision-rpu-prm crop=true
+  ```
 
 ### --aud [H.264/HEVC]
 Insert Access Unit Delimiter NAL.

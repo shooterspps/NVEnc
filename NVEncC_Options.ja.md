@@ -122,6 +122,7 @@
   - [--dolby-vision-profile \<string\> \[HEVC, AV1\]](#--dolby-vision-profile-string-hevc-av1)
   - [--dolby-vision-rpu \<string\> \[HEVC, AV1\]](#--dolby-vision-rpu-string-hevc-av1)
   - [--dolby-vision-rpu copy \[HEVC, AV1\]](#--dolby-vision-rpu-copy-hevc-av1)
+  - [--dolby-vision-rpu-prm \<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...](#--dolby-vision-rpu-prm-param1value1param2value2)
   - [--aud \[H.264/HEVC\]](#--aud-h264hevc)
   - [--repeat-headers](#--repeat-headers)
   - [--pic-struct \[H.264/HEVC\]](#--pic-struct-h264hevc)
@@ -825,8 +826,9 @@ Specifies the max temporal layer used for hierarchical coding.
 ```
 h264:  auto, 1, 1b, 1.1, 1.2, 1.3, 2, 2.1, 2.2, 3, 3.1, 3.2, 4, 4.1, 4.2, 5, 5.1, 5.2
 hevc:  auto, 1, 2, 2.1, 3, 3.1, 4, 4.1, 5, 5.1, 5.2, 6, 6.1, 6.2
-av1 :  auto, 2, 2.1, 2.2, 2.3, 3, 3.1, 3.2, 3.3, 4, 4.1, 4.2, 4.3, 5, 5.1, 5.2, 5.3, 6, 6.1, 6.2, 6.3, 7, 7.1, 7.2, 7.3
+av1 :  auto
 ```
+<!-- av1 :  auto, 2, 2.1, 2.2, 2.3, 3, 3.1, 3.2, 3.3, 4, 4.1, 4.2, 4.3, 5, 5.1, 5.2, 5.3, 6, 6.1, 6.2, 6.3, 7, 7.1, 7.2, 7.3 -->
 
 ### --profile &lt;string&gt;
 エンコードするコーデックのプロファイルを指定する。指定しない場合は自動的に決定される。
@@ -925,13 +927,28 @@ unset, copy, 5.0, 8.1, 8.2, 8.4
 ```
 
 ### --dolby-vision-rpu &lt;string&gt; [HEVC, AV1]
-指定のrpuファイルに含まれるdolby visionのmetadataを出力ファイルに挿入します。
+指定のrpuファイルに含まれるdolby visionのmetadataを出力ファイルに挿入します。[--dolby-vision-profile](#--dolby-vision-profile-string)との併用が推奨です。
 
 ### --dolby-vision-rpu copy [HEVC, AV1]
 HEVCの入力ファイルから読み取ったdolby visionのmetadataを出力ファイルに挿入します。 [--dolby-vision-profile](#--dolby-vision-profile-string)との併用が推奨です。
 
 avhw読み込みでは、フレームの並び替えにタイムスタンプを使用するため、タイムスタンプの取得できないraw ESのような入力ファイルでは使用できません。
 こうした場合には、avsw読み込みを使用してください。 
+
+### --dolby-vision-rpu-prm &lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...  
+
+```--dolby-vision-rpu```用のパラメータを指定する。
+
+- **パラメータ**
+  
+  - crop=&lt;bool&gt;
+
+    RPUのactive area offsetsを0に設定する (レターボックスなしの意味)。
+
+- 使用例
+  ```
+  例:  --dolby-vision-rpu-prm crop=true
+  ```
 
 
 ### --aud [H.264/HEVC]
