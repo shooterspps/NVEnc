@@ -215,6 +215,13 @@ NVIDIA グラフィックドライバ 551.23
 今後の更新で設定ファイルの互換性がなくなるかもしれません。
 
 【メモ】
+2024.11.24 (7.76)
+- --dolby-vision-rpuをファイルから読む場合に壊してしまっていたのを修正。
+- --vpp-libplacebo-debandのgrain_y, grain_cの読み取りが行われない問題を修正。
+- --vpp-libplacebo-debandのgrain_cのヘルプを修正。
+- --dolby-vision-rpuと--dhdr10-infoの併用に対応。
+- --vpp-ngx-truehdrのデフォルト値を変更。
+
 2024.11.22 (7.75)
 - AV1ではLevelを常に自動選択させるよう変更。
 - --dolby-vision-profileで対象外のプロファイルも読み込めていた問題を修正。
