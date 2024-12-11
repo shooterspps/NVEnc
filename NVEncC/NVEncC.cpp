@@ -505,14 +505,19 @@ int _tmain(int argc, TCHAR **argv) {
         }
     }
 #endif //#if defined(_WIN32) || defined(_WIN64)
+    if (encPrm.ctrl.processMonitorDevUsageReset) {
+        return processMonitorRGYDeviceResetEntry();
+    }
+    if (encPrm.ctrl.processMonitorDevUsage) {
+        return processMonitorRGYDeviceUsage(encPrm.deviceID);
+    }
 
     encPrm.encConfig.encodeCodecConfig = codecPrm[encPrm.codec_rgy];
 
     int ret = 1;
 
     NVEncCore nvEnc;
-    if (   NV_ENC_SUCCESS == nvEnc.Initialize(&encPrm)
-        && NV_ENC_SUCCESS == nvEnc.InitEncode(&encPrm)) {
+    if (   NV_ENC_SUCCESS == nvEnc.Init(&encPrm)) {
         nvEnc.SetAbortFlagPointer(&g_signal_abort);
         set_signal_handler();
         nvEnc.PrintEncodingParamsInfo(RGY_LOG_INFO);

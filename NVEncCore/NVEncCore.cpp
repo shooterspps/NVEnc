@@ -67,6 +67,7 @@
 #include "rgy_level_h264.h"
 #include "rgy_level_hevc.h"
 #include "rgy_level_av1.h"
+#include "rgy_device_info_cache.h"
 #include "NVEncParam.h"
 #include "NVEncUtil.h"
 #include "NVEncFilter.h"
@@ -277,6 +278,7 @@ NVEncCore::NVEncCore() :
 #if ENABLE_AVSW_READER
     m_cuvidDec(),
 #endif //#if ENABLE_AVSW_READER
+    m_deviceUsage(),
     m_pAbortByUser(nullptr),
     m_cudaSchedule(CU_CTX_SCHED_AUTO),
     m_stCreateEncodeParams(),
@@ -469,14 +471,8 @@ NVENCSTATUS NVEncCore::InitChapters(const InEncodeVideoParam *inputParam) {
     return NV_ENC_SUCCESS;
 }
 
-NVENCSTATUS NVEncCore::InitInput(InEncodeVideoParam *inputParam, const std::vector<std::unique_ptr<NVGPUInfo>> &gpuList) {
+NVENCSTATUS NVEncCore::InitInput(InEncodeVideoParam *inputParam, DeviceCodecCsp& HWDecCodecCsp) {
 #if ENABLE_RAW_READER
-#if ENABLE_AVSW_READER
-    DeviceCodecCsp HWDecCodecCsp;
-    for (const auto &gpu : gpuList) {
-        HWDecCodecCsp.push_back(std::make_pair(gpu->id(), gpu->cuvid_csp()));
-    }
-#endif
     m_pStatus.reset(new EncodeStatus());
 
     int subburnTrackId = 0;
@@ -971,14 +967,28 @@ NVENCSTATUS NVEncCore::CheckGPUListByEncoder(std::vector<std::unique_ptr<NVGPUIn
     return NV_ENC_SUCCESS;
 }
 
-NVENCSTATUS NVEncCore::GPUAutoSelect(std::vector<std::unique_ptr<NVGPUInfo>> &gpuList, const InEncodeVideoParam *inputParam) {
+NVENCSTATUS NVEncCore::GPUAutoSelect(std::vector<std::unique_ptr<NVGPUInfo>> &gpuList, const InEncodeVideoParam *inputParam, const RGYDeviceUsageLockManager *devUsageLock) {
     UNREFERENCED_PARAMETER(inputParam);
     if (gpuList.size() <= 1) {
         m_nDeviceId = gpuList.front()->id();
         return NV_ENC_SUCCESS;
     }
+    int maxDeviceUsageCount = 1;
+    std::vector<std::pair<int, int64_t>> deviceUsage;
+    if (gpuList.size() > 1) {
+        deviceUsage = m_deviceUsage->getUsage(devUsageLock);
+        for (size_t i = 0; i < deviceUsage.size(); i++) {
+            maxDeviceUsageCount = std::max(maxDeviceUsageCount, deviceUsage[i].first);
+            if (deviceUsage[i].first > 0) {
+                PrintMes(RGY_LOG_DEBUG, _T("Device #%d: %d usage.\n"), i, deviceUsage[i].first);
+            }
+        }
+    }
+
     std::map<int, double> gpuscore;
     for (const auto& gpu : gpuList) {
+        const int deviceUsageCount = (int)gpu->id() < (int)deviceUsage.size() ? deviceUsage[gpu->id()].first : 0;
+        double usage_score = 100.0 * (maxDeviceUsageCount - deviceUsageCount) / (double)maxDeviceUsageCount;
         double core_score = gpu->cuda_cores() * inputParam->ctrl.gpuSelect.cores;
         double cc_score = (gpu->cc().first * 10.0 + gpu->cc().second) * inputParam->ctrl.gpuSelect.gen;
         double ve_score = 0.0;
@@ -999,9 +1009,9 @@ NVENCSTATUS NVEncCore::GPUAutoSelect(std::vector<std::unique_ptr<NVGPUInfo>> &gp
             gpu_score = 100.0 * (1.0 - std::pow(info.GPULoad / 100.0, 1.5)) * inputParam->ctrl.gpuSelect.gpu;
             PrintMes(RGY_LOG_DEBUG, _T("GPU #%d (%s) Load: GPU %.1f, VE: %.1f.\n"), gpu->id(), gpu->name().c_str(), info.GPULoad, info.VEELoad);
         }
-        gpuscore[gpu->id()] = cc_score + ve_score + gpu_score + core_score;
-        PrintMes(RGY_LOG_DEBUG, _T("GPU #%d (%s) score: %.1f: VE %.1f, GPU %.1f, CC %.1f, Core %.1f.\n"), gpu->id(), gpu->name().c_str(),
-            gpuscore[gpu->id()], ve_score, gpu_score, cc_score, core_score);
+        gpuscore[gpu->id()] = usage_score + cc_score + ve_score + gpu_score + core_score;
+        PrintMes(RGY_LOG_DEBUG, _T("GPU #%d (%s) score: %.1f: Use %.1f, VE %.1f, GPU %.1f, CC %.1f, Core %.1f.\n"), gpu->id(), gpu->name().c_str(),
+            gpuscore[gpu->id()], usage_score, ve_score, gpu_score, cc_score, core_score);
     }
     std::sort(gpuList.begin(), gpuList.end(), [&](const std::unique_ptr<NVGPUInfo>& a, const std::unique_ptr<NVGPUInfo>& b) {
         if (gpuscore.at(a->id()) != gpuscore.at(b->id())) {
@@ -1147,7 +1157,7 @@ NVENCSTATUS NVEncCore::Deinitialize() {
     m_dynamicRC.clear();
     m_ssim.reset();
     m_pLastFilterParam.reset();
-
+    m_deviceUsage.reset();
     m_pStatus.reset();
     PrintMes(RGY_LOG_DEBUG, _T("Closed EncodeStatus.\n"));
 
@@ -1171,8 +1181,6 @@ RGY_ERR NVEncCore::AllocateBufferInputHost(const VideoInfo *pInputInfo) {
     }
 
     m_inputHostBuffer.resize(m_pipelineDepth);
-    //このアライメントは読み込み時の色変換の並列化のために必要
-    const int align = 64 * (RGY_CSP_BIT_DEPTH[pInputInfo->csp] > 8 ? 2 : 1);
     const int bufWidth  = pInputInfo->srcWidth  - pInputInfo->crop.e.left - pInputInfo->crop.e.right;
     const int bufHeight = pInputInfo->srcHeight - pInputInfo->crop.e.bottom - pInputInfo->crop.e.up;
     PrintMes(RGY_LOG_DEBUG, _T("Allocate Host buffers: %s %dx%d, buffer count %d\n"),
@@ -3587,7 +3595,15 @@ bool NVEncCore::encodeIsHighBitDepth(const InEncodeVideoParam *inputParam) {
     return inputParam->outputDepth > 8;
 }
 
-NVENCSTATUS NVEncCore::Initialize(InEncodeVideoParam *inputParam) {
+DeviceCodecCsp NVEncCore::GetHWDecCodecCsp(const bool skipHWDecodeCheck, std::vector<std::unique_ptr<NVGPUInfo>>& gpuList) {
+    DeviceCodecCsp HWDecCodecCsp;
+    for (const auto &gpu : gpuList) {
+        HWDecCodecCsp.push_back(std::make_pair(gpu->id(), (skipHWDecodeCheck) ? getHWDecCodecCsp(skipHWDecodeCheck) : gpu->cuvid_csp()));
+    }
+    return HWDecCodecCsp;
+}
+
+NVENCSTATUS NVEncCore::Init(InEncodeVideoParam *inputParam) {
     NVENCSTATUS nvStatus = NV_ENC_SUCCESS;
 
     InitLog(inputParam);
@@ -3606,11 +3622,6 @@ NVENCSTATUS NVEncCore::Initialize(InEncodeVideoParam *inputParam) {
         return nvStatus;
     }
     PrintMes(RGY_LOG_DEBUG, _T("InitCuda: Success.\n"));
-    return nvStatus;
-}
-
-NVENCSTATUS NVEncCore::InitEncode(InEncodeVideoParam *inputParam) {
-    NVENCSTATUS nvStatus = NV_ENC_SUCCESS;
 
     //入力などにも渡すため、まずはインスタンスを作っておく必要がある
     m_pPerfMonitor = std::make_unique<CPerfMonitor>();
@@ -3635,14 +3646,64 @@ NVENCSTATUS NVEncCore::InitEncode(InEncodeVideoParam *inputParam) {
             return NV_ENC_ERR_INVALID_CALL;
         }
     }
-
-    //デコーダが使用できるか確認する必要があるので、先にGPU関係の情報を取得しておく必要がある
-    std::vector<std::unique_ptr<NVGPUInfo>> gpuList;
-    if (NV_ENC_SUCCESS != (nvStatus = InitDeviceList(gpuList, m_cudaSchedule, !inputParam->disableDX11, !inputParam->disableVulkan, inputParam->ctrl.skipHWDecodeCheck, inputParam->disableNVML))) {
-        PrintMes(RGY_LOG_ERROR, FOR_AUO ? _T("Cudaの初期化に失敗しました。\n") : _T("Failed to initialize CUDA.\n"));
-        return nvStatus;
+    
+    DeviceCodecCsp HWDecCodecCsp;
+    auto deviceInfoCache = std::make_shared<RGYDeviceInfoCache>();
+    if (auto sts = deviceInfoCache->loadCacheFile(); sts != RGY_ERR_NONE) {
+        if (sts == RGY_ERR_FILE_OPEN) { // ファイルは存在するが開けない
+            deviceInfoCache.reset(); // キャッシュの存在を無視して進める
+        }
+    } else {
+        HWDecCodecCsp = deviceInfoCache->getDeviceDecCodecCsp();
+        PrintMes(RGY_LOG_DEBUG, _T("HW dec codec csp support read from cache file.\n"));
     }
-    PrintMes(RGY_LOG_DEBUG, _T("InitDeviceList: Success.\n"));
+    std::vector<std::unique_ptr<NVGPUInfo>> gpuList;
+    auto getDevIdName = [&gpuList]() {
+        std::map<int, std::string> devIdName;
+        for (const auto& gpu : gpuList) {
+            devIdName[gpu->id()] = tchar_to_string(gpu->name());
+        }
+        return devIdName;
+    };
+    if (deviceInfoCache
+        && (deviceInfoCache->getDeviceIds().size() == 0
+            ||deviceInfoCache->getDeviceIds().size() != HWDecCodecCsp.size())) {
+        if (NV_ENC_SUCCESS != (nvStatus = InitDeviceList(gpuList, m_cudaSchedule, !inputParam->disableDX11, !inputParam->disableVulkan, inputParam->ctrl.skipHWDecodeCheck, inputParam->disableNVML))) {
+            PrintMes(RGY_LOG_ERROR, _T("Failed to initialize devices.\n"));
+            return nvStatus;
+        }
+        PrintMes(RGY_LOG_DEBUG, _T("InitDeviceList: Success.\n"));
+        HWDecCodecCsp = GetHWDecCodecCsp(inputParam->ctrl.skipHWDecodeCheck, gpuList);
+        deviceInfoCache->setDecCodecCsp(getDevIdName(), HWDecCodecCsp);
+        deviceInfoCache->saveCacheFile();
+        PrintMes(RGY_LOG_DEBUG, _T("HW dec codec csp support saved to cache file.\n"));
+    }
+
+    //入力ファイルを開き、入力情報も取得
+    //デコーダが使用できるか確認する必要があるので、先にGPU関係の情報を取得しておく必要がある
+    auto input_ret = std::async(std::launch::async, [&] {
+        auto sts = InitInput(inputParam, HWDecCodecCsp);
+        if (sts == RGY_ERR_NONE) {
+            inputParam->applyDOVIProfile(m_pFileReader->getInputDOVIProfile());
+        }
+        return sts;
+    });
+
+    if (gpuList.size() == 0) {
+        if (NV_ENC_SUCCESS != (nvStatus = InitDeviceList(gpuList, m_cudaSchedule, !inputParam->disableDX11, !inputParam->disableVulkan, inputParam->ctrl.skipHWDecodeCheck, inputParam->disableNVML))) {
+            PrintMes(RGY_LOG_ERROR, _T("Failed to initialize devices.\n"));
+            return nvStatus;
+        }
+        if (deviceInfoCache) {
+            deviceInfoCache->setDeviceIds(getDevIdName());
+        }
+    }
+
+    std::unique_ptr<RGYDeviceUsageLockManager> devUsageLock;
+    if (gpuList.size() > 1) {
+        m_deviceUsage = std::make_unique<RGYDeviceUsage>();
+        devUsageLock = m_deviceUsage->lock(); // ロックは親プロセス側でとる
+    }
 
     //リスト中のGPUのうち、まずは指定されたHWエンコードが可能なもののみを選択
     if (NV_ENC_SUCCESS != (nvStatus = CheckGPUListByEncoder(gpuList, inputParam))) {
@@ -3658,7 +3719,7 @@ NVENCSTATUS NVEncCore::InitEncode(InEncodeVideoParam *inputParam) {
     PrintMes(RGY_LOG_DEBUG, _T("CheckGPUListByEncoder: Success.\n"));
 
     //使用するGPUの優先順位を決定
-    if (NV_ENC_SUCCESS != (nvStatus = GPUAutoSelect(gpuList, inputParam))) {
+    if (NV_ENC_SUCCESS != (nvStatus = GPUAutoSelect(gpuList, inputParam, devUsageLock.get()))) {
         PrintMes(RGY_LOG_ERROR, FOR_AUO ? _T("GPUの自動選択に失敗しました。\n") : _T("Failed to select gpu.\n"));
         return nvStatus;
     }
@@ -3670,15 +3731,8 @@ NVENCSTATUS NVEncCore::InitEncode(InEncodeVideoParam *inputParam) {
         return NV_ENC_ERR_UNSUPPORTED_PARAM;
     }
 
-    //入力ファイルを開き、入力情報も取得
-    //デコーダが使用できるか確認する必要があるので、先にGPU関係の情報を取得しておく必要がある
-    if (NV_ENC_SUCCESS != (nvStatus = InitInput(inputParam, gpuList))) {
-        PrintMes(RGY_LOG_ERROR, FOR_AUO ? _T("入力ファイルを開けませんでした。\n") : _T("Failed to open input file.\n"));
-        return nvStatus;
-    }
+    if (auto sts = input_ret.get(); sts < RGY_ERR_NONE) return NV_ENC_ERR_UNSUPPORTED_PARAM;
     PrintMes(RGY_LOG_DEBUG, _T("InitInput: Success.\n"));
-
-    inputParam->applyDOVIProfile(m_pFileReader->getInputDOVIProfile());
 
     bool bOutputHighBitDepth = encodeIsHighBitDepth(inputParam);
     if (inputParam->lossless && inputParam->losslessIgnoreInputCsp == 0) {
@@ -3731,12 +3785,25 @@ NVENCSTATUS NVEncCore::InitEncode(InEncodeVideoParam *inputParam) {
             PrintMes(RGY_LOG_DEBUG, _T("device #%d (%s) selected.\n"), gpuList.front()->id(), gpuList.front()->name().c_str());
         }
     }
+    if (m_deviceUsage) {
+        const int devID = gpuList.front()->id();
+        // 登録を解除するプロセスを起動
+        const auto [err_run_proc, child_pid] = m_deviceUsage->startProcessMonitor(devID);
+        if (err_run_proc == RGY_ERR_NONE) {
+            // プロセスが起動できたら、その子プロセスのIDを登録する
+            m_deviceUsage->add(devID, child_pid, devUsageLock.get());
+        }
+    }
+    devUsageLock.reset();
 
     if (NV_ENC_SUCCESS != (nvStatus = InitDevice(gpuList, inputParam))) {
         PrintMes(RGY_LOG_ERROR, FOR_AUO ? _T("NVENCのインスタンス作成に失敗しました。\n") : _T("Failed to create NVENC instance.\n"));
         return nvStatus;
     }
     PrintMes(RGY_LOG_DEBUG, _T("InitNVEncInstance: Success.\n"));
+    if (deviceInfoCache) {
+        deviceInfoCache->updateCacheFile();
+    }
 
     { //出力解像度の自動設定 decoderの初期化前に実施
         if (inputParam->input.dstWidth < 0 && inputParam->input.dstHeight < 0) {
@@ -4072,7 +4139,7 @@ NVENCSTATUS NVEncCore::NvEncEncodeFrame(EncodeBuffer *pEncodeBuffer, const int i
         PrintMes(RGY_LOG_ERROR, _T("Invalid input frame ID %d sent to encoder.\n"), inputFrameId);
         return NV_ENC_ERR_GENERIC;
     }
-    m_encTimestamp->add(timestamp, inputFrameId, (encPicParams.frameIdx = m_encodeFrameID++), duration, metadatalist);
+    m_encTimestamp->add(timestamp, inputFrameId, (encPicParams.frameIdx = (uint32_t)(m_encodeFrameID++)), duration, metadatalist);
 
     NVENCSTATUS nvStatus = m_dev->encoder()->NvEncEncodePicture(&encPicParams);
     if (nvStatus != NV_ENC_SUCCESS && nvStatus != NV_ENC_ERR_NEED_MORE_INPUT) {
@@ -4878,8 +4945,8 @@ NVENCSTATUS NVEncCore::Encode() {
             auto heTransferFin = shared_ptr<void>(inputFrameBuf.heTransferFin.get(), [&](void *ptr) {
                 SetEvent((HANDLE)ptr);
             });
-            for (auto &data : frame.dataList()) {
 #if ENABLE_VPP_SMOOTH_QP_FRAME
+            for (auto &data : frame.dataList()) {
                 if (data->dataType() == RGY_FRAME_DATA_QP) {
                     auto dataqp = dynamic_cast<RGYFrameDataQP *>(data.get());
                     NVEncCtxAutoLock(ctxlock(m_dev->vidCtxLock()));
@@ -4889,8 +4956,8 @@ NVENCSTATUS NVEncCore::Encode() {
                         nvStatus = err_to_nv(rgy_err);
                     }
                 }
-#endif
             }
+#endif
             inputFrame.setHostFrameInfo(inputFrameBuf.cubuf->frame, heTransferFin);
             inputFrame.setInputFrameId(nInputFrame);
             PrintMes(RGY_LOG_TRACE, _T("input frame (host) #%d, timestamp %lld, duration %lld\n"), nInputFrame, inputFrame.getTimeStamp(), inputFrame.getDuration());
@@ -5015,6 +5082,9 @@ NVENCSTATUS NVEncCore::Encode() {
     }
     m_pFileWriter->Close();
     m_pFileReader->Close();
+    if (m_deviceUsage) {
+        m_deviceUsage->close();
+    }
     m_pStatus->WriteResults();
     if (m_ssim) {
         m_ssim->showResult();

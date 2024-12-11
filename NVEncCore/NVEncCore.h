@@ -53,6 +53,7 @@
 #include "rgy_bitstream.h"
 #include "rgy_frame_info.h"
 #include "rgy_hdr10plus.h"
+#include "rgy_device_usage.h"
 
 class RGYTimecode;
 
@@ -71,10 +72,7 @@ public:
     NVEncCore();
     virtual ~NVEncCore();
 
-    virtual NVENCSTATUS Initialize(InEncodeVideoParam *inputParam);
-
-    //エンコードの初期化 (デバイスの初期化(Initialize())後に行うこと)
-    virtual NVENCSTATUS InitEncode(InEncodeVideoParam *inputParam);
+    virtual NVENCSTATUS Init(InEncodeVideoParam *inputParam);
 
     //エンコードを実行
     virtual NVENCSTATUS Encode();
@@ -100,6 +98,9 @@ protected:
     RGY_CSP GetEncoderCSP(const InEncodeVideoParam *inputParam);
     RGY_CSP GetRawOutCSP(const InEncodeVideoParam *inputParam);
 
+    //hwデコーダが出力する色空間を取得
+    DeviceCodecCsp GetHWDecCodecCsp(const bool skipHWDecodeCheck, std::vector<std::unique_ptr<NVGPUInfo>>& gpuList);
+
     //チャプターファイルを読み込み
     NVENCSTATUS readChapterFile(const tstring& chapfile);
 
@@ -107,7 +108,7 @@ protected:
     virtual NVENCSTATUS InitLog(const InEncodeVideoParam *inputParam);
 
     //エンコーダへの入力を初期化
-    virtual NVENCSTATUS InitInput(InEncodeVideoParam *inputParam, const std::vector<std::unique_ptr<NVGPUInfo>> &gpuList);
+    virtual NVENCSTATUS InitInput(InEncodeVideoParam *inputParam, DeviceCodecCsp& HWDecCodecCsp);
 
     //エンコーダへの入力を初期化
     virtual NVENCSTATUS InitOutput(InEncodeVideoParam *inputParam, NV_ENC_BUFFER_FORMAT encBufferFormat);
@@ -125,7 +126,7 @@ protected:
     NVENCSTATUS CheckGPUListByEncoder(std::vector<std::unique_ptr<NVGPUInfo>> &gpuList, const InEncodeVideoParam *inputParam);
 
     //GPUを自動的に選択する
-    NVENCSTATUS GPUAutoSelect(std::vector<std::unique_ptr<NVGPUInfo>> &gpuList, const InEncodeVideoParam *inputParam);
+    NVENCSTATUS GPUAutoSelect(std::vector<std::unique_ptr<NVGPUInfo>> &gpuList, const InEncodeVideoParam *inputParam, const RGYDeviceUsageLockManager *devUsageLock);
 
     //デバイスの初期化
     virtual NVENCSTATUS InitDevice(std::vector<std::unique_ptr<NVGPUInfo>> &gpuList, const InEncodeVideoParam *inputParam);
@@ -174,6 +175,7 @@ protected:
 #if ENABLE_AVSW_READER
     unique_ptr<CuvidDecode>      m_cuvidDec;              //デコード
 #endif //#if ENABLE_AVSW_READER
+    std::unique_ptr<RGYDeviceUsage> m_deviceUsage;
 
     bool                        *m_pAbortByUser;          //ユーザーからの中断指令
 
