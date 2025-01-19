@@ -131,6 +131,12 @@ void NVEncoder::setStructVer(NV_ENC_CONFIG& obj) const {
     }
 }
 
+void NVEncoder::setStructVer(NV_ENC_RC_PARAMS& obj) const {
+    static const int latest_ver = 1;
+    static_assert(NV_ENC_RC_PARAMS_VER == NVENC_STRUCT_VER2(latest_ver, NVENCAPI_VERSION));
+    obj.version = NVENC_STRUCT_VER2(latest_ver, m_apiVer);
+}
+
 void NVEncoder::setStructVer(NV_ENC_PIC_PARAMS& obj) const {
     if (nvenc_api_ver_check(m_apiVer, nvenc_api_ver(12, 2))) {
         static const int latest_ver = 7;
@@ -312,7 +318,17 @@ NVENCSTATUS NVEncoder::DestroyEncoder() {
 }
 
 void NVEncoder::NVPrintFuncError(const TCHAR *funcName, NVENCSTATUS nvStatus) {
-    PrintMes(RGY_LOG_ERROR, _T("Error on %s: %d (%s)\n"), funcName, nvStatus, char_to_tstring(_nvencGetErrorEnum(nvStatus)).c_str());
+    tstring err_mes;
+    if (m_hEncoder && m_pEncodeAPI->nvEncGetLastErrorString) {
+        auto ptr = m_pEncodeAPI->nvEncGetLastErrorString(m_hEncoder);
+        if (ptr && strlen(ptr) > 0) {
+            err_mes = char_to_tstring(ptr);
+        }
+    }
+    if (err_mes.empty()) {
+        err_mes = char_to_tstring(_nvencGetErrorEnum(nvStatus));
+    }
+    PrintMes(RGY_LOG_ERROR, _T("Error on %s: %d (%s)\n"), funcName, nvStatus, err_mes.c_str());
 }
 
 void NVEncoder::NVPrintFuncError(const TCHAR *funcName, CUresult code) {
@@ -630,7 +646,7 @@ NVENCSTATUS NVEncoder::NvEncOpenEncodeSessionEx(void *device, NV_ENC_DEVICE_TYPE
 
     m_pEncodeAPI = std::make_unique<NV_ENCODE_API_FUNCTION_LIST>();
     if (!m_pEncodeAPI) {
-        PrintMes(RGY_LOG_ERROR, FOR_AUO ? _T("NV_ENCODE_API_FUNCTION_LIST用のメモリ確保に失敗しました。\n") : _T("Failed to allocate memory for NV_ENCODE_API_FUNCTION_LIST.\n"));
+        PrintMes(RGY_LOG_ERROR, _T("Failed to allocate memory for NV_ENCODE_API_FUNCTION_LIST.\n"));
         return NV_ENC_ERR_OUT_OF_MEMORY;
     }
 
@@ -743,9 +759,7 @@ NVENCSTATUS NVEncoder::InitSession() {
 NVENCSTATUS NVEncoder::CreateEncoder(NV_ENC_INITIALIZE_PARAMS *initParams) {
     NVENCSTATUS nvStatus;
     if (NV_ENC_SUCCESS != (nvStatus = m_pEncodeAPI->nvEncInitializeEncoder(m_hEncoder, initParams))) {
-        PrintMes(RGY_LOG_ERROR,
-            _T("%s: %d (%s)\n"), FOR_AUO ? _T("エンコーダの初期化に失敗しました。\n") : _T("Failed to Initialize the encoder\n."),
-            nvStatus, char_to_tstring(_nvencGetErrorEnum(nvStatus)).c_str());
+        NVPrintFuncError(_T("nvEncInitializeEncoder"), nvStatus);
         return nvStatus;
     }
     PrintMes(RGY_LOG_DEBUG, _T("m_pEncodeAPI->nvEncInitializeEncoder: Success.\n"));
@@ -1011,7 +1025,7 @@ RGY_ERR NVGPUInfo::initDevice(int deviceID, CUctx_flags ctxFlags, bool error_if_
         //DX11デバイスの初期化に成功したら、そのデバイスのCUDAをcudaD3D11GetDeviceを使って初期化
         cuResult = cuD3D11GetDevice(&cuDevice, m_dx11->GetAdaptor());
         if (cuResult != CUDA_SUCCESS) {
-            writeLog(RGY_LOG_ERROR, _T("Failed to init CUDA device #%d from DX11 device.\n"), deviceID);
+            writeLog(RGY_LOG_WARN, _T("Failed to init CUDA device #%d from DX11 device.\n"), deviceID);
             return err_to_rgy(cuResult);
         }
         writeLog(RGY_LOG_DEBUG, _T("  cuDeviceGet:DX11(%d): success: %d\n"), deviceID, cuDevice);
