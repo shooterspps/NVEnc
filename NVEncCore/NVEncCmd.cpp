@@ -180,7 +180,7 @@ tstring encoder_help() {
     });
     str += strsprintf(_T("")
         _T("   --output-depth <int>         set output bit depth ( 8(default), 10 )\n")
-        _T("   --output-csp <string>        set output csp ( yuv420(default), yuv444 )\n")
+        _T("   --output-csp <string>        set output csp ( yuv420(default), yuv422, yuv444, yuva420 )\n")
         _T("   --sar <int>:<int>            set Sample  Aspect Ratio\n")
         _T("   --dar <int>:<int>            set Display Aspect Ratio\n")
         _T("\n")
@@ -255,12 +255,14 @@ tstring encoder_help() {
         _T("                                  - disabled\n")
         _T("                                  - each\n")
         _T("                                  - middle\n")
+        _T("   --tf-level <int>             set temporal filtering level (0 (default), 4)\n")
+        _T("                                  requires bframes >= 4\n")
+        _T("   --temporal-layers <int>      set number of temporal layers\n")
         _T("   --direct <string>            [H264] set B Direct mode\n")
         _T("                                  auto(default), none, spatial, temporal\n")
         _T("   --(no-)adapt-transform       [H264] set adaptive transform mode (default=auto)\n")
         _T("   --hierarchial-p              [H264] enable hierarchial P frames\n")
-        _T("   --hierarchial-b              [H264] enable hierarchial B frames\n")
-        _T("   --temporal-layers <int>      [H264] set number of temporal layers\n"),
+        _T("   --hierarchial-b              [H264] enable hierarchial B frames\n"),
         DEFAUTL_QP_I, DEFAULT_QP_P, DEFAULT_QP_B,
         DEFAULT_AVG_BITRATE / 1000,
         DEFAULT_GOP_LENGTH, (DEFAULT_GOP_LENGTH == 0) ? _T(" (auto)") : _T(""),
@@ -274,8 +276,6 @@ tstring encoder_help() {
         _T("   --(no-)deblock               [H264] enable(disable) deblock filter\n"));
 
     str += strsprintf(_T("\n")
-        _T("   --tf-level <int>             [HEVC] set temporal filtering level (0 (default), 4)\n")
-        _T("                                  requires bframes >= 4\n")
         _T("   --cu-max <int>               [HEVC] set max CU size\n")
         _T("   --cu-min  <int>              [HEVC] set min CU size\n")
         _T("                                  8, 16, 32 are avaliable\n")
@@ -294,7 +294,6 @@ tstring encoder_help() {
         _T("   --tile-columns <int>         [AV1] number of tile columns (default:0=auto).\n")
         _T("   --tile-rows <int>            [AV1] number of tile rows (default:0=auto).\n")
         _T("                                  0 (auto,default), 1, 2, 4, 8, 16, 32, 64\n")
-        _T("   --max-temporal-layers <int>  [AV1] max temporal layer for hierarchical coding.\n")
         _T("   --refs-forward <int>         [AV1] max number of forward reference frame.\n")
         _T("                                  0 (auto,default), 1, 2, 3, 4\n")
         _T("   --refs-backward <int>        [AV1] max number of L1 list reference frame.\n")
@@ -308,7 +307,7 @@ tstring encoder_help() {
     str += strsprintf(_T("")
         _T("   --split-enc <string>         set cuda schedule mode (default: sync).\n")
         _T("                                  - auto (default), auto_forced\n")
-        _T("                                  - forced_2, forced_3, disable\n"));
+        _T("                                  - forced_2, forced_3, forced_4, disable\n"));
 
     str += _T("\n");
     str += gen_cmd_help_common();
@@ -954,17 +953,6 @@ int parse_one_option(const TCHAR *option_name, const TCHAR* strInput[], int& i, 
         }
         return 0;
     }
-    if (IS_OPTION("temporal-layers")) {
-        i++;
-        int value = 0;
-        if (1 == _stscanf_s(strInput[i], _T("%d"), &value)) {
-            codecPrm[RGY_CODEC_H264].h264Config.numTemporalLayers = value;
-        } else {
-            print_cmd_error_invalid_value(option_name, strInput[i]);
-            return 1;
-        }
-        return 0;
-    }
     if (IS_OPTION("ref")) {
         i++;
         try {
@@ -1136,34 +1124,11 @@ int parse_one_option(const TCHAR *option_name, const TCHAR* strInput[], int& i, 
         }
         return 0;
     }
-    if (IS_OPTION("max-temporal-layers:h264")) {
+    if (IS_OPTION("temporal-layers") || IS_OPTION("max-temporal-layers")) {
         i++;
         try {
             int value = std::stoi(strInput[i]);
-            codecPrm[RGY_CODEC_H264].h264Config.maxTemporalLayers = value;
-        } catch (...) {
-            print_cmd_error_invalid_value(option_name, strInput[i]);
-            return 1;
-        }
-        return 0;
-    }
-    if (IS_OPTION("max-temporal-layers:av1")) {
-        i++;
-        try {
-            int value = std::stoi(strInput[i]);
-            codecPrm[RGY_CODEC_AV1].av1Config.maxTemporalLayersMinus1 = value-1;
-        } catch (...) {
-            print_cmd_error_invalid_value(option_name, strInput[i]);
-            return 1;
-        }
-        return 0;
-    }
-    if (IS_OPTION("max-temporal-layers")) {
-        i++;
-        try {
-            int value = std::stoi(strInput[i]);
-            codecPrm[RGY_CODEC_H264].h264Config.maxTemporalLayers = value;
-            codecPrm[RGY_CODEC_AV1].av1Config.maxTemporalLayersMinus1 = value-1;
+            pParams->temporalLayers = value;
         } catch (...) {
             print_cmd_error_invalid_value(option_name, strInput[i]);
             return 1;
@@ -1284,7 +1249,16 @@ int parse_one_option(const TCHAR *option_name, const TCHAR* strInput[], int& i, 
             GUID result_guid = get_guid_from_name(strInput[i], h264_profile_names);
             if (0 != memcmp(&result_guid, &zero, sizeof(result_guid))) {
                 pParams->encConfig.profileGUID = result_guid;
-                if (!FOR_AUO) pParams->yuv444 = memcmp(&pParams->encConfig.profileGUID, &NV_ENC_H264_PROFILE_HIGH_444_GUID, sizeof(result_guid)) == 0;
+                if (!FOR_AUO) {
+                    if (memcmp(&pParams->encConfig.profileGUID, &NV_ENC_H264_PROFILE_HIGH_444_GUID, sizeof(result_guid)) == 0) {
+                        pParams->outputCsp = RGY_CSP_YUV444;
+                    } else if (memcmp(&pParams->encConfig.profileGUID, &NV_ENC_H264_PROFILE_HIGH_422_GUID, sizeof(result_guid)) == 0) {
+                        pParams->outputCsp = RGY_CSP_YUV422;
+                    } else if(memcmp(&pParams->encConfig.profileGUID, &NV_ENC_H264_PROFILE_HIGH_10_GUID, sizeof(result_guid)) == 0) {
+                        pParams->outputDepth = 10;
+                        pParams->outputCsp = RGY_CSP_YV12;
+                    }
+                }
                 flag = true;
             }
         }
@@ -1296,14 +1270,14 @@ int parse_one_option(const TCHAR *option_name, const TCHAR* strInput[], int& i, 
                 ptr[0] = (uint16_t)result;
                 if (!FOR_AUO) {
                     if (result == NV_ENC_PROFILE_HEVC_MAIN444) {
-                        pParams->yuv444 = TRUE;
+                        pParams->outputCsp = RGY_CSP_YUV444;
                     }
                     if (result == NV_ENC_PROFILE_HEVC_MAIN10) {
                         pParams->outputDepth = 10;
-                        pParams->yuv444 = FALSE;
+                        pParams->outputCsp = RGY_CSP_YV12;
                     } else if (result == NV_ENC_PROFILE_HEVC_MAIN) {
                         pParams->outputDepth = 8;
-                        pParams->yuv444 = FALSE;
+                        pParams->outputCsp = RGY_CSP_YV12;
                     }
                 }
                 flag = true;
@@ -1365,16 +1339,18 @@ int parse_one_option(const TCHAR *option_name, const TCHAR* strInput[], int& i, 
         i++;
         int value = 0;
         if (get_list_value(list_output_csp, strInput[i], &value)) {
-            const RGY_CSP csp = (RGY_CSP)value;
-            pParams->yuv444 = csp == RGY_CSP_YUV444 || csp == RGY_CSP_RGB;
-            pParams->alphaChannel = csp == RGY_CSP_YUVA420;
-            pParams->rgb = csp == RGY_CSP_RGB;
-            if (!FOR_AUO && pParams->yuv444) {
-                //H264
-                memcpy(&pParams->encConfig.profileGUID, &NV_ENC_H264_PROFILE_HIGH_444_GUID, sizeof(pParams->encConfig.profileGUID));
-                //HEVC
-                uint16_t *ptr = (uint16_t *)&codecPrm[RGY_CODEC_HEVC].hevcConfig.tier;
-                ptr[0] = (uint16_t)NV_ENC_PROFILE_HEVC_MAIN444;
+            pParams->outputCsp = (RGY_CSP)value;
+            if (!FOR_AUO) {
+                if (RGY_CSP_CHROMA_FORMAT[pParams->outputCsp] == RGY_CHROMAFMT_YUV444 || RGY_CSP_CHROMA_FORMAT[pParams->outputCsp] == RGY_CHROMAFMT_RGB || RGY_CSP_CHROMA_FORMAT[pParams->outputCsp] == RGY_CHROMAFMT_RGB_PACKED) {
+                    //H264
+                    memcpy(&pParams->encConfig.profileGUID, &NV_ENC_H264_PROFILE_HIGH_444_GUID, sizeof(pParams->encConfig.profileGUID));
+                    //HEVC
+                    uint16_t *ptr = (uint16_t *)&codecPrm[RGY_CODEC_HEVC].hevcConfig.tier;
+                    ptr[0] = (uint16_t)NV_ENC_PROFILE_HEVC_MAIN444;
+                } else if (RGY_CSP_CHROMA_FORMAT[pParams->outputCsp] == RGY_CHROMAFMT_YUV422) {
+                    //H264
+                    memcpy(&pParams->encConfig.profileGUID, &NV_ENC_H264_PROFILE_HIGH_422_GUID, sizeof(pParams->encConfig.profileGUID));
+                }
             }
         } else {
             print_cmd_error_invalid_value(option_name, strInput[i], list_output_csp);
@@ -1800,14 +1776,9 @@ tstring gen_cmd(const InEncodeVideoParam *pParams, const NV_ENC_CODEC_CONFIG cod
     OPT_BOOL(_T("--lossless"), _T(""), lossless);
     OPT_BOOL(_T("--lossless-ignore-input-csp"), _T(""), losslessIgnoreInputCsp);
 
-    if (pParams->rgb) {
-        cmd << _T(" --output-csp ") << get_cx_desc(list_output_csp, (int)RGY_CSP_RGB);
-    } else if (pParams->yuv444) {
-        cmd << _T(" --output-csp ") << get_cx_desc(list_output_csp, (int)RGY_CSP_YUV444);
-    } else if (pParams->alphaChannel) {
-        cmd << _T(" --output-csp ") << get_cx_desc(list_output_csp, (int)RGY_CSP_YUVA420);
-    }
+    OPT_LST(_T("--output-csp"), outputCsp, list_output_csp);
     OPT_LST(_T("--tf-level"), temporalFilterLevel, list_temporal_filter_level);
+    OPT_NUM(_T("--temporal-layers"), temporalLayers);
 
     if (pParams->codec_rgy == RGY_CODEC_AV1 || save_disabled_prm) {
         OPT_LST_AV1(_T("--level"), _T(":av1"), level, list_av1_level);
@@ -1820,7 +1791,6 @@ tstring gen_cmd(const InEncodeVideoParam *pParams, const NV_ENC_CODEC_CONFIG cod
         OPT_LST_AV1(_T("--tile-rows"),     _T(""), numTileRows,    list_av1_tiles);
         OPT_LST_AV1(_T("--part-size-min"), _T(""), minPartSize,    list_part_size_av1);
         OPT_LST_AV1(_T("--part-size-max"), _T(""), maxPartSize,    list_part_size_av1);
-        OPT_NUM_AV1(_T("--max-temporal-layers"), _T(":av1"), maxTemporalLayersMinus1+1);
         OPT_LST_AV1(_T("--refs-forward"),  _T(""), numFwdRefs, list_av1_refs_forward);
         OPT_LST_AV1(_T("--refs-backward"), _T(""), numBwdRefs, list_av1_refs_backward);
     }
@@ -1852,8 +1822,6 @@ tstring gen_cmd(const InEncodeVideoParam *pParams, const NV_ENC_CODEC_CONFIG cod
         OPT_BOOL_H264(_T("--aud"), _T(""), _T(":h264"), outputAUD);
         OPT_BOOL_H264(_T("--repeat-headers"), _T(""), _T(":h264"), repeatSPSPPS);
         OPT_BOOL_H264(_T("--pic-struct"), _T(""), _T(":h264"), outputPictureTimingSEI);
-        OPT_NUM_H264(_T("--temporal-layers"), _T(":h264"), numTemporalLayers);
-        OPT_NUM_H264(_T("--max-temporal-layers"), _T(":h264"), maxTemporalLayers);
         if ((codecPrm[RGY_CODEC_H264].h264Config.entropyCodingMode) != (codecPrmDefault[RGY_CODEC_H264].h264Config.entropyCodingMode)) {
             cmd << _T(" --") << get_chr_from_value(list_entropy_coding, codecPrm[RGY_CODEC_H264].h264Config.entropyCodingMode);
         }

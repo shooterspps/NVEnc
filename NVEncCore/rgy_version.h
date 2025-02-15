@@ -29,9 +29,9 @@
 #ifndef __RGY_CONFIG_H__
 #define __RGY_CONFIG_H__
 
-#define VER_FILEVERSION             0,7,82,0
-#define VER_STR_FILEVERSION          "7.82"
-#define VER_STR_FILEVERSION_TCHAR _T("7.82")
+#define VER_FILEVERSION             0,8,0,1
+#define VER_STR_FILEVERSION          "8.00b1"
+#define VER_STR_FILEVERSION_TCHAR _T("8.00b1")
 
 #ifdef _M_IX86
 #define BUILD_ARCH_STR _T("x86")
@@ -87,6 +87,7 @@ const char *get_encoder_version();
 #define ENABLE_LIBDOVI 1
 #define ENABLE_LIBHDR10PLUS 1
 #define ENABLE_VULKAN 0
+#define AVS_INTERF_VER 11
 
 #ifndef ENABLE_NVOFFRUC_HEADER
 #define ENABLE_NVOFFRUC_HEADER 0
@@ -110,6 +111,7 @@ const char *get_encoder_version();
 
 #define ENABLE_VPP_SMOOTH_QP_FRAME 0
 #define ENABLE_AVOID_IDLE_CLOCK 0
+#define ENABLE_INTERLACE_FROM_HWMEM 1
 
 #ifdef NVENC_AUO
 #define ENCODER_NAME  "NVEnc"
@@ -156,6 +158,7 @@ const char *get_encoder_version();
 #define ENABLE_D3D11               0
 #define ENABLE_D3D11_DEVINFO_WMI   0
 #define ENABLE_NVSDKNGX            0
+#define ENABLE_INTERLACE_FROM_HWMEM 1
 #endif // #if defined(WIN32) || defined(WIN64)
 
 #endif //__RGY_CONFIG_H__
