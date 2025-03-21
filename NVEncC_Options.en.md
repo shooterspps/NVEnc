@@ -227,6 +227,7 @@
   - [--vpp-perf-monitor](#--vpp-perf-monitor)
   - [--vpp-nvvfx-model-dir \<string\>](#--vpp-nvvfx-model-dir-string)
 - [Other Options](#other-options)
+  - [--parallel \[\<int\>\] or \[\<string\>\]](#--parallel-int-or-string)
   - [--cuda-schedule \<string\>](#--cuda-schedule-string)
   - [--disable-nvml \<int\>](#--disable-nvml-int)
   - [--disable-nvml](#--disable-nvml)
@@ -3100,6 +3101,53 @@ Set path to the model folder of Video Effect models.
 
 ## Other Options
 
+### --parallel [&lt;int&gt;] or [&lt;string&gt;]
+Enables parallel encoding by file splitting. Divides the input file into multiple chunks and encodes them in parallel using separate threads to accelerate processing.
+
+
+In most cases, it is recommended to use parallel counts below the encoder count available on system. Max parallel counts available is ```max((NVENC encoder num available on system)*2, 4)```.
+
+- **Restrictions**
+
+  Parallel encoding will be automatically disabled in the following cases:
+  - Input is from pipe
+  - Input is not seekable
+  - Frame timestamps are unstable
+  - No encoding is performed (-c raw)
+  - --trim option is enabled
+  - --timecode option is specified
+  - --tcfile-in option is specified
+  - --keyfile option is specified
+  - --key-on-chapter option is enabled
+  - ssim/psnr/vmaf is enabled
+  - --vpp-subburn (subtitle burn-in) is specified
+  - --vpp-fruc (frame interpolation) is enabled
+
+- **Examples**
+  ```
+  Example: Auto-determine number of parallel processes
+  --parallel auto
+
+  Example: Run with 3 parallel threads
+  --parallel 3
+  ```
+
+- **Compared to --split-enc (Frame-split encoding)**
+
+  <img width="720" src="./data/nvencc_parallel_encode_20250320_en.png">
+  
+  |                   | --split-enc <br> (Frame-split encoding) | --parallel <br> (File-split encoding) |
+  | :--:              |:--:                                     |:--:                                   |
+  | Parallel          |Encode only                             | Read/Decode<br>Filter/Encode         | 
+  | Supported readers |All                                     | avsw / avhw / avs / vpy              |
+  | Supported codecs  |HEVC/AV1                                | All                                  | 
+  | Multi-GPU         |Not supported                           | Supported                            | 
+  | Compression loss  |Small                                   | Minimal                              | 
+  | Restrictions      |None                                    | Many (as mentioned above)            |
+  | RAM Usage         |Normal                                  | High                                 |
+
+
+
 ### --cuda-schedule &lt;string&gt;
   Change the behavior of the CPU when waiting for GPU task completion. The default is auto.
 
@@ -3170,6 +3218,7 @@ Select the level of log output.
   - core ... Application core logs, including core_progress and core_result
   - core_progress ... Progress indicator
   - core_result ... Encode result
+  - parallel ... Parallel encode related logs
   - decoder ... decoder logs
   - input ... File input logs
   - output ... File output logs
