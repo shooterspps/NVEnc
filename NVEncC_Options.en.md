@@ -69,7 +69,7 @@
   - [--vbr-quality \<float\>](#--vbr-quality-float)
   - [--dynamic-rc \<int\>:\<int\>:\<int\>\<int\>,\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\],...](#--dynamic-rc-intintintintparam1value1param2value2)
   - [--lookahead \<int\>](#--lookahead-int)
-  - [--lookahead-level \<int\> \[HEVC\]](#--lookahead-level-int-hevc)
+  - [--lookahead-level \<int\>](#--lookahead-level-int)
   - [--no-i-adapt](#--no-i-adapt)
   - [--no-b-adapt](#--no-b-adapt)
   - [--strict-gop](#--strict-gop)
@@ -182,6 +182,8 @@
   - [--tcfile-in \<string\>](#--tcfile-in-string)
   - [--timebase \<int\>/\<int\>](#--timebase-intint)
   - [--input-hevc-bsf \<string\>](#--input-hevc-bsf-string)
+  - [--input-pixel-format \<string\>](#--input-pixel-format-string)
+  - [--offset-video-dts-advance](#--offset-video-dts-advance)
   - [--allow-other-negative-pts](#--allow-other-negative-pts)
 - [Vpp Options](#vpp-options)
   - [Vpp Filtering order](#vpp-filtering-order)
@@ -664,7 +666,7 @@ Change the rate control mode and rate control params within the specified range 
 Enable lookahead, and specify its target range by the number of frames. (0 - 32)  
 This is useful to improve image quality, allowing adaptive insertion of I and B frames.
 
-### --lookahead-level &lt;int&gt; [HEVC]
+### --lookahead-level &lt;int&gt;  
 Set level of lookahead, higher level may improve quality at the expense of performance. (0 - 3, default = 0)  
 
 ### --no-i-adapt
@@ -1635,6 +1637,12 @@ switch hevc bitstream filter used for hw decoder input. (for debug purpose)
 
   - libavcodec  
     use hevc_mp4toannexb bitstream filter.
+
+### --input-pixel-format &lt;string&gt;
+Set "pixel_format" for input avdevice. (not intended on other situations)
+
+### --offset-video-dts-advance  
+Offset timestamp to cancel bframe delay.
 
 ### --allow-other-negative-pts  
 Allow negative timestamps for audio, subtitles. Intended for debug purpose only.
@@ -3114,6 +3122,7 @@ In most cases, it is recommended to use parallel counts below the encoder count 
   - Input is not seekable
   - Frame timestamps are unstable
   - No encoding is performed (-c raw)
+  - --dynamic-rc is enabled
   - --trim option is enabled
   - --timecode option is specified
   - --tcfile-in option is specified

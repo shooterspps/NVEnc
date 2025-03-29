@@ -29,9 +29,9 @@
 #ifndef __RGY_CONFIG_H__
 #define __RGY_CONFIG_H__
 
-#define VER_FILEVERSION             0,8,0,7
-#define VER_STR_FILEVERSION          "8.00b7"
-#define VER_STR_FILEVERSION_TCHAR _T("8.00b7")
+#define VER_FILEVERSION             0,8,2,0
+#define VER_STR_FILEVERSION          "8.02"
+#define VER_STR_FILEVERSION_TCHAR _T("8.02")
 
 #ifdef _M_IX86
 #define BUILD_ARCH_STR _T("x86")
@@ -72,7 +72,7 @@ const char *get_encoder_version();
 #define ENABLE_KEYFRAME_INSERT 1
 
 #if defined(_WIN32) || defined(_WIN64)
-#define NV_DRIVER_VER_MIN 418081
+#define NV_DRIVER_VER_MIN 452039
 #define ENABLE_OPENCL 1
 #define ENABLE_CPP_REGEX 1
 #define ENABLE_DTL 1
@@ -142,7 +142,7 @@ const char *get_encoder_version();
 #endif
 
 #else //#if defined(WIN32) || defined(WIN64)
-#define NV_DRIVER_VER_MIN 418030
+#define NV_DRIVER_VER_MIN 452039
 #include "rgy_config.h"
 #define ENCODER_NAME               "NVEnc"
 #define DECODER_NAME               "cuvid"

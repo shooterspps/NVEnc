@@ -4027,6 +4027,12 @@ RGY_ERR NVEncCore::Init(InEncodeVideoParam *inputParam) {
         return sts;
     }
 
+#if ENABLE_VULKAN
+    if (inputParam->ctrl.enableVulkan == RGYParamInitVulkan::TargetVendor) {
+        setenv("VK_LOADER_DRIVERS_SELECT", "*nvidia*", 1);
+    }
+#endif // ENABLE_VULKAN
+
     //m_pDeviceを初期化
     if (!check_if_nvcuda_dll_available()) {
         PrintMes(RGY_LOG_ERROR,
@@ -4087,7 +4093,7 @@ RGY_ERR NVEncCore::Init(InEncodeVideoParam *inputParam) {
     if (deviceInfoCache
         && (deviceInfoCache->getDeviceIds().size() == 0
             ||deviceInfoCache->getDeviceIds().size() != HWDecCodecCsp.size())) {
-        if (RGY_ERR_NONE != (sts = InitDeviceList(gpuList, m_cudaSchedule, !inputParam->disableDX11, !inputParam->disableVulkan, inputParam->ctrl.skipHWDecodeCheck, inputParam->disableNVML))) {
+        if (RGY_ERR_NONE != (sts = InitDeviceList(gpuList, m_cudaSchedule, !inputParam->disableDX11, inputParam->ctrl.enableVulkan, inputParam->ctrl.skipHWDecodeCheck, inputParam->disableNVML))) {
             PrintMes(RGY_LOG_ERROR, _T("Failed to initialize devices.\n"));
             return sts;
         }
@@ -4109,7 +4115,7 @@ RGY_ERR NVEncCore::Init(InEncodeVideoParam *inputParam) {
     });
 
     if (gpuList.size() == 0) {
-        if (RGY_ERR_NONE != (sts = InitDeviceList(gpuList, m_cudaSchedule, !inputParam->disableDX11, !inputParam->disableVulkan, inputParam->ctrl.skipHWDecodeCheck, inputParam->disableNVML))) {
+        if (RGY_ERR_NONE != (sts = InitDeviceList(gpuList, m_cudaSchedule, !inputParam->disableDX11, inputParam->ctrl.enableVulkan, inputParam->ctrl.skipHWDecodeCheck, inputParam->disableNVML))) {
             PrintMes(RGY_LOG_ERROR, _T("Failed to initialize devices.\n"));
             return sts;
         }
@@ -4745,6 +4751,11 @@ RGY_ERR NVEncCore::Encode() {
                     }
                 }
             }
+        }
+    }
+    if (!(err == RGY_ERR_NONE || err == RGY_ERR_MORE_DATA || err == RGY_ERR_MORE_SURFACE || err == RGY_ERR_MORE_BITSTREAM || err == RGY_ERR_ABORTED)) {
+        for (auto& p : m_pipelineTasks) {
+            p->printStatus();
         }
     }
     // エラー終了の場合も含めキューをすべて開放する (m_pipelineTasksを解放する前に行う)

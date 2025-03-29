@@ -38,6 +38,7 @@ _build/
 [Bb]uild[Ll]og.*
 
 *.o
+*.d
 *.cpp.d
 *.c.d
 *_i.c
@@ -70,7 +71,6 @@ _build/
 *.VC.db
 
 # Visual C++ cache files
-.vscode/
 .vs/
 ipch/
 *.aps

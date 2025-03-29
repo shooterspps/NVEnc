@@ -83,6 +83,16 @@ static const int RGY_WAIT_INTERVAL = 60000;
 
 using unique_cuevent = unique_ptr<cudaEvent_t, cudaevent_deleter>;
 
+
+#if defined(_WIN32) || defined(_WIN64)
+#define THREAD_DEC_USE_FUTURE 0
+#else
+// linuxではスレッド周りの使用の違いにより、従来の実装ではVCECore解放時に異常終了するので、
+// std::futureを使った実装に切り替える
+// std::threadだとtry joinのようなことができないのが問題
+#define THREAD_DEC_USE_FUTURE 1
+#endif
+
 // cuvidフレームのラッパー
 struct CUFrameCuvid : public CUFrameBufBase {
     CUFrameCuvid() : CUFrameBufBase(),
@@ -520,6 +530,8 @@ public:
     void addCUEvent(std::shared_ptr<cudaEvent_t>& cuevent) {
         m_cuevents.push_back(cuevent);
     }
+
+    bool hasDependencyFrame() const { return m_dependencyFrame != nullptr; }
     
     virtual RGY_ERR setDependCUStream(cudaStream_t stream) {
         auto sts = m_dependencyFrame->setDependCUStream(stream);
@@ -551,9 +563,9 @@ public:
     }
     
     void streamWaitCuEvents(cudaStream_t stream) {
-        NVEncCtxAutoLock(ctxlock(m_vidCtxLock));
         for (auto& cuevent : m_cuevents) {
             if (cuevent != nullptr) {
+                NVEncCtxAutoLock(ctxlock(m_vidCtxLock));
                 cudaStreamWaitEvent(stream, *cuevent.get(), 0);
             }
         }
@@ -635,14 +647,15 @@ class FrameReleaseData {
     unique_event m_heFrameAdded;
     unique_event m_heQueueEmpty;
     std::atomic<int> m_queueSize;
+    int m_queueSizeMax;
     std::thread m_thread;
     RGYParamThread m_threadParam;
     bool m_abort;
 public:
-    FrameReleaseData(CUvideoctxlock vidCtxLock, RGYParamThread threadParam) : m_vidCtxLock(vidCtxLock), m_prevInputFrame(), m_mtx(),
+    FrameReleaseData(CUvideoctxlock vidCtxLock, int queueSizeMax, RGYParamThread threadParam) : m_vidCtxLock(vidCtxLock), m_prevInputFrame(), m_mtx(),
         m_heFrameAdded(std::move(CreateEventUnique(nullptr, FALSE, FALSE))),
         m_heQueueEmpty(std::move(CreateEventUnique(nullptr, FALSE, FALSE))),
-        m_queueSize(0), m_thread(), m_threadParam(threadParam), m_abort(false) {}
+        m_queueSize(0), m_queueSizeMax(std::max(1, queueSizeMax)), m_thread(), m_threadParam(threadParam), m_abort(false) {}
 
     ~FrameReleaseData() {
         finish();
@@ -659,6 +672,7 @@ public:
             WaitForSingleObject(m_heQueueEmpty.get(), 10);
         }
     }
+    int queueSizeMax() const { return m_queueSizeMax; }
 
     void start() {
         m_thread = std::thread([&]() {
@@ -686,18 +700,34 @@ public:
                 } else {
                     if ((m_queueSize = queueSize) == 0) {
                         SetEvent(m_heQueueEmpty.get());
+                        WaitForSingleObject(m_heFrameAdded.get(), 16);
                     }
-                    WaitForSingleObject(m_heFrameAdded.get(), 100);
                 }
             }
         });
     }
     void addFrame(std::unique_ptr<PipelineTaskOutput>& frame, std::shared_ptr<T> event) {
         dynamic_cast<PipelineTaskOutputSurf *>(frame.get())->addCUEvent(event);
+        while (m_queueSize >= m_queueSizeMax) {
+            SetEvent(m_heFrameAdded.get());
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
         m_queueSize++;
         std::lock_guard<std::mutex> lock(m_mtx);
         m_prevInputFrame.push_back(std::make_pair(std::move(frame), event));
         SetEvent(m_heFrameAdded.get());
+    }
+
+    size_t queueSize() {
+        std::lock_guard<std::mutex> lock(m_mtx);
+        size_t total = 0;
+        for (auto& f : m_prevInputFrame) {
+            total++;
+            if (auto surf = dynamic_cast<PipelineTaskOutputSurf *>(f.first.get()); surf != nullptr) {
+                total += surf->hasDependencyFrame() ? 1 : 0;
+            }
+        }
+        return total;
     }
 };
 
@@ -772,6 +802,25 @@ public:
     };
     virtual ~PipelineTask() {
         m_workSurfs.clear();
+    }
+    virtual size_t getOutQueueFrames() const {
+        size_t total = 0;
+        { // m_outQeueueにアクセスする場合、必要なら m_outQeueueMtx のロックを取得
+            std::optional<std::lock_guard<std::mutex>> lock;
+            if (m_outQeueueMtx) {
+                lock.emplace(*m_outQeueueMtx);
+            }
+            for (auto& f : m_outQeueue) {
+                total++;
+                if (auto surf = dynamic_cast<PipelineTaskOutputSurf *>(f.get()); surf != nullptr) {
+                    total += surf->hasDependencyFrame() ? 1 : 0;
+                }
+            }
+        }
+        return total;
+    }
+    virtual void printStatus() {
+        PrintMes(RGY_LOG_INFO, _T("in %d, out %d, outQeueue size: %d.\n"), m_inFrames, m_outFrames, (int)getOutQueueFrames());
     }
     virtual bool isPassThrough() const { return false; }
     virtual tstring print() const { return getPipelineTaskTypeName(m_type); }
@@ -1072,7 +1121,7 @@ protected:
     int64_t m_hwDecFirstPts;
     bool m_gotFrameAfterFirstPts; //最初のフレームより前のptsで出てきたフレームのカウント
 #if THREAD_DEC_USE_FUTURE
-    std::future m_thDecoder;
+    std::future<RGY_ERR> m_thDecoder;
 #else
     std::thread m_thDecoder;
 #endif //#if THREAD_DEC_USE_FUTURE
@@ -1102,9 +1151,9 @@ public:
         PrintMes(RGY_LOG_DEBUG, _T("Flushing Decoder\n"));
 #if THREAD_DEC_USE_FUTURE
         if (m_thDecoder.valid()) {
-            while (m_thDecoder.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
 #else
         if (m_thDecoder.joinable()) {
+#endif
             //エンコード中断時の処理
             //ここでフレームをすべて吐き出し切らないと、中断時にデコードスレッドが終了しない
             while (!m_dec->GetError()
@@ -1115,6 +1164,9 @@ public:
                     m_dec->frameQueue()->releaseFrame(&pInfo);
                 }
             }
+#if THREAD_DEC_USE_FUTURE
+            while (m_thDecoder.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+#else
             while (m_thDecoder.native_handle() && RGYThreadStillActive(m_thDecoder.native_handle())) {
 #endif
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -1128,7 +1180,11 @@ public:
     }
     RGY_ERR startThread() {
         m_state = RGY_STATE_RUNNING;
+#if THREAD_DEC_USE_FUTURE
+        m_thDecoder = std::async(std::launch::async, [this]() {
+#else
         m_thDecoder = std::thread([this]() {
+#endif //#if THREAD_DEC_USE_FUTURE
             CUresult curesult = CUDA_SUCCESS;
             RGYBitstream bitstream = RGYBitstreamInit();
             m_threadParam.apply(GetCurrentThread());
@@ -1221,7 +1277,11 @@ protected:
             auto dispInfo = CUVIDPARSERDISPINFO{ 0 };
             if (!m_dec->frameQueue()->dequeue(&dispInfo)) {
                 m_dec->frameQueue()->waitForQueueUpdate();
+#if THREAD_DEC_USE_FUTURE
+                if (m_thDecoder.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+#else
                 if (m_thDecoder.native_handle() && !RGYThreadStillActive(m_thDecoder.native_handle())) {
+#endif
                     PrintMes(RGY_LOG_ERROR, _T("Decode thread is not responding.\n"));
                     m_state = RGY_STATE_ERROR;
                     return RGY_ERR_UNKNOWN;
@@ -2503,6 +2563,11 @@ protected:
     std::future<RGY_ERR> m_threadOutputFuture;
     std::optional<RGY_ERR> m_threadOutputResult;
     bool m_threadOutputAbort;
+    // Linux (ENABLE_ASYNC=0)の場合にデータの取り出しをマルチスレッドで行うと、
+    // NvEncLockBitstreamがInvalid(8)を返して異常終了してしまう
+    // そのため、スレッドを立てずに従来通りPipelineTaskCUDAVppの中でエンコーダに渡すフレームが足りなくなったときに
+    // outputThreadFunc(true)を読んで出力するようにする
+    static const bool m_bEnableOutputThread = ENABLE_ASYNC != 0;
 public:
     PipelineTaskNVEncode(
         NVGPUInfo *dev, NVEncRunCtx *runCtx, RGY_CODEC encCodec, int encWidth, int encHeight, RGY_CSP encCsp, int encBitdepth, RGY_PICSTRUCT encPicStruct,
@@ -2510,7 +2575,7 @@ public:
         RGYTimecode *timecode, RGYTimestamp *encTimestamp, rgy_rational<int> outputTimebase, const RGYHDR10Plus *hdr10plus, const DOVIRpu *doviRpu,
         std::vector<NVEncRCParam>& dynamicRC, std::vector<int>& keyFile, bool keyOnChapter, std::vector<std::unique_ptr<AVChapter>>& chapters,
          int outMaxQueueSize, RGYParamThread threadParam, std::shared_ptr<RGYLog> log)
-        : PipelineTask(PipelineTaskType::NVENC, dev, outMaxQueueSize, true, threadParam, log),
+        : PipelineTask(PipelineTaskType::NVENC, dev, outMaxQueueSize, m_bEnableOutputThread, threadParam, log),
         m_runCtx(runCtx), m_encCodec(encCodec), m_encWidth(encWidth), m_encHeight(encHeight), m_encCsp(encCsp), m_encBitdepth(encBitdepth), m_encPicStruct(encPicStruct),
         m_stEncConfig(stEncConfig), m_stCreateEncodeParams(stCreateEncodeParams),
         m_timecode(timecode), m_encTimestamp(encTimestamp), m_outputTimebase(outputTimebase),
@@ -2520,13 +2585,19 @@ public:
     };
     virtual ~PipelineTaskNVEncode() {
         flushEncoder();
-        m_threadOutputAbort = true;
-        getOutputThreadResult(30 * 1000);
-        if (m_threadOutput.joinable()) {
-            m_threadOutput.join();
+        if (m_bEnableOutputThread) {
+            m_threadOutputAbort = true;
+            getOutputThreadResult(30 * 1000);
+            if (m_threadOutput.joinable()) {
+                m_threadOutput.join();
+            }
         }
         m_outQeueue.clear(); // m_bitStreamOutが解放されるより前にこちらを解放する
     };
+
+    bool useOutputThread() const {
+        return m_bEnableOutputThread;
+    }
 
     virtual std::optional<std::pair<RGYFrameInfo, int>> requiredSurfIn() override {
         RGYFrameInfo info(m_encWidth, m_encHeight, m_encCsp, m_encBitdepth, m_encPicStruct, RGY_MEM_TYPE_GPU);
@@ -2535,7 +2606,7 @@ public:
     virtual std::optional<std::pair<RGYFrameInfo, int>> requiredSurfOut() override { return std::nullopt; };
 
     std::optional<RGY_ERR> getOutputThreadResult(int timeout) {
-        if (m_threadOutputResult.has_value()) return m_threadOutputResult;
+        if (!m_bEnableOutputThread || m_threadOutputResult.has_value()) return m_threadOutputResult;
         const auto status = m_threadOutputFuture.wait_for(std::chrono::milliseconds(timeout));
         if (status == std::future_status::ready) {
             m_threadOutputResult = m_threadOutputFuture.get();
@@ -2589,9 +2660,8 @@ protected:
         nvStatus = m_dev->encoder()->NvEncUnlockBitstream(pEncodeBuffer->stOutputBfr.hBitstreamBuffer);
         return { RGY_ERR_NONE, output };
     }
-
-    RGY_ERR outputThreadFunc() {
-        m_threadParam.apply(GetCurrentThread());
+public:
+    RGY_ERR outputThreadFunc(const bool getOneFrame) {
         while (!m_threadOutputAbort) {
             struct CUFrameEncAutoDelete {
                 RGYQueueMPMP<CUFrameEnc *>& qEncodeBufferFree;
@@ -2602,6 +2672,9 @@ protected:
             {
                 CUFrameEnc *frameEncPtr = nullptr;
                 while (!m_runCtx->qEncodeBufferUsed().front_copy_and_pop_no_lock(&frameEncPtr)) {
+                    if (getOneFrame) {
+                        return RGY_ERR_NONE;
+                    }
                     m_runCtx->qEncodeBufferUsed().wait_for_push(); // 最大16ms待機
                     if (m_threadOutputAbort) {
                         return RGY_ERR_ABORTED;
@@ -2630,16 +2703,21 @@ protected:
                 }
                 m_outQeueue.push_back(std::make_unique<PipelineTaskOutputBitstream>(outBs.second));
             }
+            if (getOneFrame) {
+                return RGY_ERR_NONE;
+            }
         }
         return RGY_ERR_NONE;
     }
-
+protected:
     RGY_ERR runThreadOutput() {
+        if (!m_bEnableOutputThread) return RGY_ERR_NONE;
         m_threadOutputFuture = m_threadOutputPromise.get_future();
         m_threadOutput = std::thread([this]() {
             auto err = RGY_ERR_NONE;
+            m_threadParam.apply(GetCurrentThread());
             try {
-                err = outputThreadFunc();
+                err = outputThreadFunc(false);
             } catch (const std::exception &e) {
                 PrintMes(RGY_LOG_ERROR, _T("Output thread failed: %s.\n"), e.what());
                 err = RGY_ERR_UNKNOWN;
@@ -2846,12 +2924,16 @@ protected:
         }
         m_runCtx->qEncodeBufferUsed().push(&flushBuffer);
 
-        //if (m_runCtx->stEOSOutputBfr().stOutputBfr.hOutputEvent && WaitForSingleObject(m_runCtx->stEOSOutputBfr().stOutputBfr.hOutputEvent, 1000) != WAIT_OBJECT_0) {
-        //    PrintMes(RGY_LOG_ERROR, _T("m_stEOSOutputBfr.hOutputEvent%s"), (FOR_AUO) ? _T("が終了しません。") : _T(" does not finish within proper time."));
-        //    return RGY_ERR_UNKNOWN;
-        //}
-        // flushしたらそれを受けて出力スレッドが終了するのを待つ
-        getOutputThreadResult(300 * 1000);
+        if (m_bEnableOutputThread) {
+            // flushしたらそれを受けて出力スレッドが終了するのを待つ
+            getOutputThreadResult(300 * 1000);
+        } else {
+            // 出力スレッドがない場合は、自分で出力処理を行う必要がある
+            sts = outputThreadFunc(false);
+            if (sts != RGY_ERR_NONE) {
+                return sts;
+            }
+        }
         return RGY_ERR_MORE_DATA;
     }
 public:
@@ -2921,7 +3003,7 @@ public:
     PipelineTaskCUDAVpp(NVGPUInfo *dev, std::vector<std::unique_ptr<NVEncFilter>>& vppfilters, NVEncFilterSsim *videoMetric,
     RGYQueueMPMP<CUFrameEnc *>& qEncodeBufferFree, bool rgbAsYUV444, int outMaxQueueSize, RGYParamThread threadParam, std::shared_ptr<RGYLog> log) :
         PipelineTask(PipelineTaskType::CUDA, dev, outMaxQueueSize, false, threadParam, log), m_vpFilters(vppfilters), m_videoMetric(videoMetric),
-        m_frameReleaseData(dev->vidCtxLock(), threadParam), m_inFrameUseFinEvent(), m_qEncodeBufferFree(qEncodeBufferFree), m_rgbAsYUV444(rgbAsYUV444),
+        m_frameReleaseData(dev->vidCtxLock(), 4, threadParam), m_inFrameUseFinEvent(), m_qEncodeBufferFree(qEncodeBufferFree), m_rgbAsYUV444(rgbAsYUV444),
         m_eventDefaultToFilter(nullptr),m_streamFilter(nullptr), m_streamDownload(nullptr), m_cuvidPrev(), m_encode(nullptr) {
 
         NVEncCtxAutoLock(ctxlock(m_dev->vidCtxLock()));
@@ -2961,6 +3043,11 @@ public:
         m_inFrameUseFinEvent.clear([](cudaEvent_t *event) { cudaEventDestroy(*event); });
     };
 
+    virtual void printStatus() override {
+        PrintMes(RGY_LOG_INFO, _T("in %d, out %d, outQeueue size: %d, frame release: %d.\n"),
+            m_inFrames, m_outFrames, getOutQueueFrames(), m_frameReleaseData.queueSize());
+    }
+
     void setEncodeTask(PipelineTaskNVEncode *encode) {
         m_encode = encode;
     }
@@ -2969,7 +3056,10 @@ public:
         m_videoMetric = videoMetric;
     }
 
-    virtual std::optional<std::pair<RGYFrameInfo, int>> requiredSurfIn() override { return std::nullopt; };
+    virtual std::optional<std::pair<RGYFrameInfo, int>> requiredSurfIn() override {
+        auto firstFilterFrame = m_vpFilters.front()->GetFilterParam()->frameIn;
+        return std::make_pair(firstFilterFrame, m_outMaxQueueSize + m_frameReleaseData.queueSizeMax());
+    };
     virtual std::optional<std::pair<RGYFrameInfo, int>> requiredSurfOut() override {
         auto lastFilterFrame = m_vpFilters.back()->GetFilterParam()->frameOut;
         return std::make_pair(lastFilterFrame, m_outMaxQueueSize);
@@ -3084,12 +3174,19 @@ public:
                 { // 使用していないエンコードバッファを取得
                     CUFrameEnc *encBufferPtr = nullptr;
                     while (!m_qEncodeBufferFree.front_copy_and_pop_no_lock(&encBufferPtr)) {
-                        m_qEncodeBufferFree.wait_for_push(); // 最大16ms待機
-                        // エンコーダの出力スレッドがここで終了してしまっているのは想定外なのでエラー終了
-                        // ここで検知しておかないとずっとここで待ち続けてしまう
                         if (m_encode) {
-                            if (auto err = m_encode->getOutputThreadResult(0); err.has_value()) {
-                                return err.value() == RGY_ERR_NONE ? RGY_ERR_ABORTED : err.value();
+                            if (m_encode->useOutputThread()) {
+                                m_qEncodeBufferFree.wait_for_push(); // 最大16ms待機
+                                // エンコーダの出力スレッドがここで終了してしまっているのは想定外なのでエラー終了
+                                // ここで検知しておかないとずっとここで待ち続けてしまう
+                                if (auto err = m_encode->getOutputThreadResult(0); err.has_value()) {
+                                    return err.value() == RGY_ERR_NONE ? RGY_ERR_ABORTED : err.value();
+                                }
+                            } else {
+                                // 出力スレッドが有効でない場合、ここで出力を行う
+                                if (auto err = m_encode->outputThreadFunc(true); err != RGY_ERR_NONE) {
+                                    return err;
+                                }
                             }
                         }
                     }

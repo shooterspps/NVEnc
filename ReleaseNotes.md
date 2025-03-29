@@ -1,5 +1,19 @@
 # NVEnc Release Notes
 
+## 8.02
+
+- Fix vpp-resize ngx-vsr, libplaceo* not working in 8.01. ( #683 )
+
+## 8.01
+
+- Fix insufficient frame buffer causing error termination when using readers other than avhw (issue since 8.00beta1).
+- Fix crash on process termination in Linux environment (issue since 8.00beta1).
+- Fix hw decode not working in Linux environment (issue since 8.00beta1).
+- Improve stability of Vulkan initialization in Linux environment.
+- Avoid unnecessary Dolby Vision RPU conversion.
+- Add detailed logging for errors during Dolby Vision RPU conversion.
+- Update documentation.
+
 ## 8.00beta7
 
 - Fix crush when using ([--parallel](./NVEncC_Options.en.md#--parallel-int-or-param1value1param2value2)).

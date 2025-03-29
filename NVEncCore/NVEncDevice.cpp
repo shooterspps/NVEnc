@@ -1014,7 +1014,7 @@ const NVEncCodecFeature *NVEncoder::getCodecFeature(const GUID &codec) {
     return nullptr;
 }
 
-RGY_ERR NVGPUInfo::initDevice(int deviceID, CUctx_flags ctxFlags, bool error_if_fail, [[maybe_unused]] bool initDX11, [[maybe_unused]] bool initVulkan, bool skipHWDecodeCheck, bool disableNVML) {
+RGY_ERR NVGPUInfo::initDevice(int deviceID, CUctx_flags ctxFlags, bool error_if_fail, [[maybe_unused]] bool initDX11, [[maybe_unused]] RGYParamInitVulkan initVulkan, bool skipHWDecodeCheck, bool disableNVML) {
 #define GETATTRIB_CHECK(val, attrib, dev) { \
         auto cuGetAttResult = cuDeviceGetAttribute(&(val), (attrib), (dev)); \
         if (cuGetAttResult == CUDA_ERROR_INVALID_DEVICE || cuGetAttResult == CUDA_ERROR_INVALID_VALUE) { \
@@ -1053,7 +1053,7 @@ RGY_ERR NVGPUInfo::initDevice(int deviceID, CUctx_flags ctxFlags, bool error_if_
     if (!m_dx11)
 #endif // #if ENABLE_D3D11
 #if ENABLE_VULKAN
-    if (initVulkan) {
+    if (initVulkan != RGYParamInitVulkan::Disable) {
         m_vulkan = std::make_unique<DeviceVulkan>();
         std::vector<const char *> extInstance;
         extInstance.push_back(VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME);
@@ -1356,10 +1356,16 @@ void NVEncCtrl::PrintMes(RGYLogLevel logLevel, const TCHAR *format, ...) {
     }
 }
 
-RGY_ERR NVEncCtrl::Initialize(const int deviceID, RGYLogLevel logLevel) {
+RGY_ERR NVEncCtrl::Initialize(const int deviceID, const RGYParamInitVulkan enableVulkan, RGYLogLevel logLevel) {
     RGY_ERR sts = RGY_ERR_NONE;
 
     initLogLevel(logLevel);
+
+#if ENABLE_VULKAN
+    if (enableVulkan == RGYParamInitVulkan::TargetVendor) {
+        setenv("VK_LOADER_DRIVERS_SELECT", "*nvidia*", 1);
+    }
+#endif
 
     //m_pDeviceを初期化
     if (!check_if_nvcuda_dll_available()) {
@@ -1422,7 +1428,7 @@ RGY_ERR NVEncCtrl::InitCuda() {
 RGY_ERR NVEncCtrl::ShowDeviceList(const int cudaSchedule, const bool skipHWDecodeCheck) {
     RGY_ERR sts = RGY_ERR_NONE;
     std::vector<std::unique_ptr<NVGPUInfo>> gpuList;
-    if (RGY_ERR_NONE != (sts = InitDeviceList(gpuList, cudaSchedule, true, true, skipHWDecodeCheck, false))) {
+    if (RGY_ERR_NONE != (sts = InitDeviceList(gpuList, cudaSchedule, true, RGYParamInitVulkan::TargetVendor, skipHWDecodeCheck, false))) {
         PrintMes(RGY_LOG_ERROR, FOR_AUO ? _T("Cudaの初期化に失敗しました。\n") : _T("Failed to initialize CUDA.\n"));
         return sts;
     }
@@ -1441,7 +1447,7 @@ RGY_ERR NVEncCtrl::ShowDeviceList(const int cudaSchedule, const bool skipHWDecod
 RGY_ERR NVEncCtrl::ShowCodecSupport(const int cudaSchedule, const bool skipHWDecodeCheck) {
     RGY_ERR sts = RGY_ERR_NONE;
     std::vector<std::unique_ptr<NVGPUInfo>> gpuList;
-    if (RGY_ERR_NONE != (sts = InitDeviceList(gpuList, cudaSchedule, true, true, skipHWDecodeCheck, false))) {
+    if (RGY_ERR_NONE != (sts = InitDeviceList(gpuList, cudaSchedule, true, RGYParamInitVulkan::TargetVendor, skipHWDecodeCheck, false))) {
         PrintMes(RGY_LOG_ERROR, FOR_AUO ? _T("Cudaの初期化に失敗しました。\n") : _T("Failed to initialize CUDA.\n"));
         return sts;
     }
@@ -1471,7 +1477,7 @@ RGY_ERR NVEncCtrl::ShowCodecSupport(const int cudaSchedule, const bool skipHWDec
 RGY_ERR NVEncCtrl::ShowNVEncFeatures(const int cudaSchedule, const bool skipHWDecodeCheck) {
     RGY_ERR sts = RGY_ERR_NONE;
     std::vector<std::unique_ptr<NVGPUInfo>> gpuList;
-    if (RGY_ERR_NONE != (sts = InitDeviceList(gpuList, cudaSchedule, true, true, skipHWDecodeCheck, false))) {
+    if (RGY_ERR_NONE != (sts = InitDeviceList(gpuList, cudaSchedule, true, RGYParamInitVulkan::TargetVendor, skipHWDecodeCheck, false))) {
         PrintMes(RGY_LOG_ERROR, FOR_AUO ? _T("Cudaの初期化に失敗しました。\n") : _T("Failed to initialize CUDA.\n"));
         return sts;
     }
@@ -1546,7 +1552,7 @@ RGY_ERR NVEncCtrl::ShowNVEncFeatures(const int cudaSchedule, const bool skipHWDe
     return sts;
 }
 
-RGY_ERR NVEncCtrl::InitDeviceList(std::vector<std::unique_ptr<NVGPUInfo>>& gpuList, const int cudaSchedule, bool initDX11, bool initVulkan, const bool skipHWDecodeCheck, const int disableNVML) {
+RGY_ERR NVEncCtrl::InitDeviceList(std::vector<std::unique_ptr<NVGPUInfo>>& gpuList, const int cudaSchedule, bool initDX11, RGYParamInitVulkan initVulkan, const bool skipHWDecodeCheck, const int disableNVML) {
     int deviceCount = 0;
 #if ENABLE_D3D11
     if (initDX11) {
@@ -1555,22 +1561,26 @@ RGY_ERR NVEncCtrl::InitDeviceList(std::vector<std::unique_ptr<NVGPUInfo>>& gpuLi
             PrintMes(RGY_LOG_WARN, _T("Failed to get device count from DX11 interface.\n"));
             initDX11 = false;
         }
+        PrintMes(RGY_LOG_DEBUG, _T("DX11 device count: %d.\n"), deviceCount);
     }
 #else
     initDX11 = false;
 #endif
 #if ENABLE_VULKAN
-    if (initVulkan) {
+    if (initVulkan == RGYParamInitVulkan::TargetVendor) {
+        setenv("VK_LOADER_DRIVERS_SELECT", "*nvidia*", 1);
+    }
+    if (initVulkan != RGYParamInitVulkan::Disable) {
         DeviceVulkan vulkan;
         deviceCount = vulkan.adapterCount();
         if (deviceCount == 0) {
             PrintMes(RGY_LOG_WARN, _T("Failed to get device count from Vulkan interface.\n"));
-            initVulkan = false;
+            initVulkan = RGYParamInitVulkan::Disable;
         }
         PrintMes(RGY_LOG_DEBUG, _T("vulkan.adapterCount: Success, %d.\n"), deviceCount);
     }
 #else
-    initVulkan = false;
+    initVulkan = RGYParamInitVulkan::Disable;
 #endif
     if (deviceCount == 0) {
         auto cuResult = cuDeviceGetCount(&deviceCount);
