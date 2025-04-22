@@ -250,6 +250,7 @@
   - [--avsdll \<string\>](#--avsdll-string)
   - [--vsdir \<string\>](#--vsdir-string)
   - [--process-codepage \<string\> \[Windows OS only\]](#--process-codepage-string-windows-os-only)
+  - [--task-perf-monitor](#--task-perf-monitor)
   - [--perf-monitor \[\<string\>\[,\<string\>\]...\]](#--perf-monitor-stringstring)
   - [--perf-monitor-interval \<int\>](#--perf-monitor-interval-int)
 
@@ -1909,6 +1910,9 @@ Performs tone mapping using [libplacebo](https://code.videolan.org/videolan/libp
   - contrast_smoothness=&lt;float&gt;  
     Contrast recovery lowpass kernel size. Default: 3.5
 
+  - inverse_tone_mapping=&lt;bool&gt;  
+    Inverse tone mapping. Default: false
+
   - visualize_lut=&lt;bool&gt;  
     Visualize tone mapping curve/LUT. Default: false
 
@@ -2516,9 +2520,9 @@ Rather weak noise reduction by modified pmd method, aimed to preserve edge while
 
 ### --vpp-gauss &lt;int&gt;
 Specify the size of Gaussian filter, from 3, 5 or 7.  
-It is necessary to add nppc64_10.dll, nppif64_10.dll, nppig64_10.dll in the same folder of NVEncC64, and could be used only in x64 version.
+It is necessary to add nppc64_11.dll, nppif64_11.dll, nppig64_11.dll in the same folder of NVEncC64, and could be used only in x64 version.
 
-The npp dlls can be downloaded from [this link](https://github.com/rigaya/NVEnc/releases/tag/7.00) (npp64_10_dll_7zip.7z).
+The npp dlls can be downloaded from [this link](https://github.com/rigaya/NVEnc/releases/tag/8.01) (npp64_11_dll.7z). It can also be found under ```<CUDA Install Path>\bin``` if you install CUDA 11.
 
 ### --vpp-subburn [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
 "Burn in" specified subtitle to the video. Text type subtitles will be rendered by [libass](https://github.com/libass/libass).
@@ -2671,8 +2675,8 @@ Specify the resizing algorithm.
       | lanczos        | Lanczos interpolation                                      |
       
        Filters on the table will use the [NPP library](https://developer.nvidia.com/npp), which supports x64 version only.
-       To use those algorithms, you need to download nppc64_10.dll, nppif64_10.dll, nppig64_10.dll separately and place it in the same folder as NVEncC64.exe.
-       The npp dlls can be downloaded from [this link](https://github.com/rigaya/NVEnc/releases/tag/7.00) (npp64_10_dll_7zip.7z).
+       To use those algorithms, you need to download nppc64_11.dll, nppif64_11.dll, nppig64_11.dll separately and place it in the same folder as NVEncC64.exe.
+       The npp dlls can be downloaded from [this link](https://github.com/rigaya/NVEnc/releases/tag/8.01) (npp64_11_dll.7z). It can also be found under ```<CUDA Install Path>\bin``` if you install CUDA 11.
 
     - [nvvfx](https://github.com/NVIDIA/MAXINE-VFX-SDK) library resize filters
 
@@ -3227,7 +3231,8 @@ Select the level of log output.
   - core ... Application core logs, including core_progress and core_result
   - core_progress ... Progress indicator
   - core_result ... Encode result
-  - parallel ... Parallel encode related logs
+  - parallel ... Parallel
+  - gpu_select ... GPU auto select
   - decoder ... decoder logs
   - input ... File input logs
   - output ... File output logs
@@ -3409,6 +3414,10 @@ Specifies vapoursynth portable directory to use. Supported on Windows only.
     When this option is set, a copy of the exe file will be created in the same directory of the original exe file,
     and the manifest file of the copy will be modified using UpdateResourceW API to switch back code page
     to the default of the OS, and then the copied exe will be run, allowing us to handle the AviSynth scripts using legacy code page.
+
+### --task-perf-monitor
+
+Output rough time consumed for each main thread tasks, including wait time.
 
 ### --perf-monitor [&lt;string&gt;[,&lt;string&gt;]...]
 Outputs performance information. You can select the information name you want to output as a parameter from the following table. The default is all (all information).

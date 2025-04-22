@@ -323,6 +323,7 @@ NVEncCore::NVEncCore() :
     m_encVUI(),
     m_rgbAsYUV444(),
     m_nProcSpeedLimit(0),
+    m_taskPerfMonitor(false),
     m_nAVSyncMode(RGY_AVSYNC_AUTO),
     m_timestampPassThrough(false),
     m_inputFps(),
@@ -763,6 +764,7 @@ RGY_ERR NVEncCore::InitParallelEncode(InEncodeVideoParam *inputParam, std::vecto
     if (inputParam->ctrl.parallelEnc.isParent() && m_deviceUsage) {
         m_deviceUsage->close();
     }
+    bool delayChildSync = false;
     if (inputParam->ctrl.parallelEnc.isParent()) {
         const int encoderCount = std::max(std::accumulate(gpuList.begin(), gpuList.end(), 0, [&](int sum, const auto& gpu) {
             return sum + ((gpu) ? gpu->encoder_count(codec_guid_rgy_to_enc(inputParam->codec_rgy)) : 0);
@@ -797,9 +799,12 @@ RGY_ERR NVEncCore::InitParallelEncode(InEncodeVideoParam *inputParam, std::vecto
             PrintMes(RGY_LOG_DEBUG, _T("Parallel encoding disabled, as parallel count id set to %d.\n"), inputParam->ctrl.parallelEnc.parallelCount);
             return RGY_ERR_NONE;
         }
+        delayChildSync = inputParam->ctrl.parallelEnc.parallelCount > encoderCount;
     }
     m_parallelEnc = std::make_unique<RGYParallelEnc>(m_pLog);
-    if ((sts = m_parallelEnc->parallelRun(inputParam, m_pFileReader.get(), m_outputTimebase, m_pStatus.get())) != RGY_ERR_NONE) {
+    if ((sts = m_parallelEnc->parallelRun(inputParam, m_pFileReader.get(), m_outputTimebase, delayChildSync, m_pStatus.get(),
+        // 子スレッドの場合はパフォーマンスカウンタは親と共有する
+        inputParam->ctrl.parallelEnc.isParent() ? m_pPerfMonitor.get() : nullptr)) != RGY_ERR_NONE) {
         if (inputParam->ctrl.parallelEnc.isChild()) {
             return sts; // 子スレッド側でエラーが起こった場合はエラー
         }
@@ -1100,6 +1105,7 @@ RGY_ERR NVEncCore::GPUAutoSelect(std::vector<std::unique_ptr<NVGPUInfo>> &gpuLis
         }
     }
 
+    const tstring PEPrefix = (inputParam->ctrl.parallelEnc.isChild()) ? strsprintf(_T("Parallel Enc %d: "), inputParam->ctrl.parallelEnc.parallelId) : _T("");
     std::map<int, double> gpuscore;
     for (const auto& gpu : gpuList) {
         const auto encoderCount = gpu->encoder_count(m_stCodecGUID);
@@ -1126,7 +1132,7 @@ RGY_ERR NVEncCore::GPUAutoSelect(std::vector<std::unique_ptr<NVGPUInfo>> &gpuLis
             PrintMes(RGY_LOG_DEBUG, _T("GPU #%d (%s) Load: GPU %.1f, VE: %.1f.\n"), gpu->id(), gpu->name().c_str(), info.GPULoad, info.VEELoad);
         }
         gpuscore[gpu->id()] = usage_score + cc_score + ve_score + gpu_score + core_score;
-        PrintMes(RGY_LOG_DEBUG, _T("GPU #%d (%s) score: %.1f: Use %.1f, VE %.1f, GPU %.1f, CC %.1f, Core %.1f.\n"), gpu->id(), gpu->name().c_str(),
+        m_pLog->write(RGY_LOG_DEBUG, RGY_LOGT_CORE_GPU_SELECT, _T("%sGPU #%d (%s) score: %.1f: Use %.1f, VE %.1f, GPU %.1f, CC %.1f, Core %.1f.\n"), PEPrefix.c_str(), gpu->id(), gpu->name().c_str(),
             gpuscore[gpu->id()], usage_score, ve_score, gpu_score, cc_score, core_score);
     }
     std::sort(gpuList.begin(), gpuList.end(), [&](const std::unique_ptr<NVGPUInfo>& a, const std::unique_ptr<NVGPUInfo>& b) {
@@ -1138,7 +1144,7 @@ RGY_ERR NVEncCore::GPUAutoSelect(std::vector<std::unique_ptr<NVGPUInfo>> &gpuLis
 
     PrintMes(RGY_LOG_DEBUG, _T("GPU Priority\n"));
     for (const auto& gpu : gpuList) {
-        PrintMes(RGY_LOG_DEBUG, _T("GPU #%d (%s): score %.1f\n"), gpu->id(), gpu->name().c_str(), gpuscore[gpu->id()]);
+        PrintMes(RGY_LOG_DEBUG, _T("%sGPU #%d (%s): score %.1f\n"), PEPrefix.c_str(), gpu->id(), gpu->name().c_str(), gpuscore[gpu->id()]);
     }
     return RGY_ERR_NONE;
 }
@@ -4056,6 +4062,14 @@ RGY_ERR NVEncCore::Init(InEncodeVideoParam *inputParam) {
 
     //入力などにも渡すため、まずはインスタンスを作っておく必要がある
     m_pPerfMonitor = std::make_unique<CPerfMonitor>();
+ #if ENABLE_PERF_COUNTER
+    if (inputParam->ctrl.parallelEnc.isChild()) {
+        // 子スレッドの場合はパフォーマンスカウンタは親と共有するので初期化不要
+        m_pPerfMonitor->setCounter(inputParam->ctrl.parallelEnc.sendData->perfCounter);
+    } else {
+        m_pPerfMonitor->runCounterThread();
+    }
+ #endif
 
     if (const auto affinity = inputParam->ctrl.threadParams.get(RGYThreadType::PROCESS).affinity; affinity.mode != RGYThreadAffinityMode::ALL) {
         SetProcessAffinityMask(GetCurrentProcess(), affinity.getMask());
@@ -4068,6 +4082,7 @@ RGY_ERR NVEncCore::Init(InEncodeVideoParam *inputParam) {
 
     m_nAVSyncMode = inputParam->common.AVSyncMode;
     m_nProcSpeedLimit = inputParam->ctrl.procSpeedLimit;
+    m_taskPerfMonitor = inputParam->ctrl.taskPerfMonitor;
     m_videoIgnoreTimestampError = inputParam->common.videoIgnoreTimestampError;
     if (inputParam->ctrl.lowLatency) {
         m_pipelineDepth = 1;
@@ -4134,7 +4149,8 @@ RGY_ERR NVEncCore::Init(InEncodeVideoParam *inputParam) {
     PrintMes(RGY_LOG_DEBUG, _T("InitInput: Success.\n"));
 
     // 並列動作の子は読み込みが終了したらすぐに並列動作を呼び出し
-    if (inputParam->ctrl.parallelEnc.isChild()) {
+    // ただし、親-子間のデータやり取りを少し遅らせる場合(delayChildSync)は親と同じタイミングで処理する
+    if (inputParam->ctrl.parallelEnc.isChild() && !inputParam->ctrl.parallelEnc.delayChildSync) {
         sts = InitParallelEncode(inputParam, gpuList);
         if (sts < RGY_ERR_NONE) return sts;
     }
@@ -4345,7 +4361,7 @@ RGY_ERR NVEncCore::Init(InEncodeVideoParam *inputParam) {
     PrintMes(RGY_LOG_DEBUG, _T("InitPerfMonitor: Success.\n"));
 
     // 親はエンコード設定が完了してから並列動作を呼び出し
-    if (inputParam->ctrl.parallelEnc.isParent()) {
+    if (inputParam->ctrl.parallelEnc.isParent() || (inputParam->ctrl.parallelEnc.isChild() && inputParam->ctrl.parallelEnc.delayChildSync)) {
         sts = InitParallelEncode(inputParam, gpuList);
         if (sts < RGY_ERR_NONE) return sts;
     }
@@ -4608,6 +4624,18 @@ RGY_ERR NVEncCore::Encode() {
     m_pStatus->SetStart();
 
     CProcSpeedControl speedCtrl(m_nProcSpeedLimit);
+    for (auto& task : m_pipelineTasks) {
+        if (m_taskPerfMonitor) {
+            task->setStopWatch();
+        }
+    }
+    std::unique_ptr<PipelineTaskStopWatch> stopwatchOutput;
+    if (m_taskPerfMonitor) {
+        stopwatchOutput = std::make_unique<PipelineTaskStopWatch>(
+            std::vector<tstring>{ _T("") },
+            std::vector<tstring>{_T("")}
+        );
+    }
 
     auto requireSync = [this]([[maybe_unused]] const size_t itask) {
 #if ENCODER_NVENC
@@ -4676,10 +4704,12 @@ RGY_ERR NVEncCore::Encode() {
                             });
                     }
                 } else { // pipelineの最終的なデータを出力
+                    if (stopwatchOutput) stopwatchOutput->set(0);
                     if ((err = d.data->write(m_pFileWriter.get(), m_videoQualityMetric.get())) != RGY_ERR_NONE) {
                         PrintMes(RGY_LOG_ERROR, _T("failed to write output: %s.\n"), get_err_mes(err));
                         break;
                     }
+                    if (stopwatchOutput) stopwatchOutput->add(0, 0);
                 }
             }
             if (dataqueue.empty()) {
@@ -4734,10 +4764,12 @@ RGY_ERR NVEncCore::Encode() {
                         });
                     if (err == RGY_ERR_MORE_DATA) err = RGY_ERR_NONE; //VPPなどでsendFrameがRGY_ERR_MORE_DATAだったが、フレームが出てくる場合がある
                 } else { // pipelineの最終的なデータを出力
+                    if (stopwatchOutput) stopwatchOutput->set(0);
                     if ((err = d.data->write(m_pFileWriter.get(), m_videoQualityMetric.get())) != RGY_ERR_NONE) {
                         PrintMes(RGY_LOG_ERROR, _T("failed to write output: %s.\n"), get_err_mes(err));
                         break;
                     }
+                    if (stopwatchOutput) stopwatchOutput->add(0, 0);
                 }
             }
             if (dataqueue.empty()) {
@@ -4786,6 +4818,31 @@ RGY_ERR NVEncCore::Encode() {
     PrintMes(RGY_LOG_DEBUG, _T("Clear vpp filters...\n"));
     m_vpFilters.clear();
     PrintMes(RGY_LOG_DEBUG, _T("Closing m_pmfxDEC/ENC/VPP...\n"));
+    // taskの集計結果を表示
+    if (m_taskPerfMonitor) {
+        PrintMes(RGY_LOG_INFO, _T("\nTask Performance\n"));
+        static const TCHAR *TASK_OUTPUT = _T("OUTPUT");
+        const int64_t totalTicks = std::accumulate(m_pipelineTasks.begin(), m_pipelineTasks.end(), 0LL, [](int64_t total, const std::unique_ptr<PipelineTask>& task) {
+            return total + task->getStopWatchTotal();
+        }) + stopwatchOutput->totalTicks();
+        if (totalTicks > 0) {
+            const size_t maxWorkStrLenLen = std::max(std::accumulate(m_pipelineTasks.begin(), m_pipelineTasks.end(), (size_t)0, [](size_t maxStrLength, const std::unique_ptr<PipelineTask>& task) {
+                return std::max(maxStrLength, task->getStopWatchMaxWorkStrLen());
+            }), stopwatchOutput->maxWorkStrLen());
+            const size_t maxTaskStrLen = std::max(std::accumulate(m_pipelineTasks.begin(), m_pipelineTasks.end(), (size_t)0, [](size_t maxStrLength, const std::unique_ptr<PipelineTask>& task) {
+                return std::max(maxStrLength, _tcslen(getPipelineTaskTypeName(task->taskType())));
+            }), _tcslen(TASK_OUTPUT));
+            for (auto& task : m_pipelineTasks) {
+                task->printStopWatch(totalTicks, maxWorkStrLenLen + maxTaskStrLen - _tcslen(getPipelineTaskTypeName(task->taskType())));
+            }
+            const auto strlines = split(stopwatchOutput->print(totalTicks, maxWorkStrLenLen + maxTaskStrLen - _tcslen(TASK_OUTPUT)), _T("\n"));
+            for (auto& str : strlines) {
+                if (str.length() > 0) {
+                    PrintMes(RGY_LOG_INFO, _T("%s: %s\n"), TASK_OUTPUT, str.c_str());
+                }
+            }
+        }
+    }
 
     //この中でフレームの解放がなされる
     PrintMes(RGY_LOG_DEBUG, _T("Clear pipeline tasks and allocated frames...\n"));
