@@ -232,6 +232,8 @@ NV_ENC_CONFIG DefaultParam() {
 InEncodeVideoParam::InEncodeVideoParam() :
     deviceID(-1),
     cudaSchedule(DEFAULT_CUDA_SCHEDULE),
+    cudaStreamOpt(1),
+    cudaMT(0),
     sessionRetry(0),
     disableNVML(0),
     disableDX11(false),
@@ -279,6 +281,7 @@ InEncodeVideoParam::InEncodeVideoParam() :
     chromaQPOffset(0),
     brefMode(NV_ENC_BFRAME_REF_MODE_AUTO),
     splitEncMode(NV_ENC_SPLIT_AUTO_MODE),
+    bitstreamPadding(false),
     common(),
     inprm(),
     ctrl(),

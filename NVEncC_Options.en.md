@@ -108,6 +108,7 @@
   - [--tile-rows \<int\> \[AV1\]](#--tile-rows-int-av1)
   - [--refs-forward \<int\> \[AV1\]](#--refs-forward-int-av1)
   - [--refs-backward \<int\> \[AV1\]](#--refs-backward-int-av1)
+  - [--bitstream-padding \[AV1\]](#--bitstream-padding-av1)
   - [--level \<string\>](#--level-string)
   - [--profile \<string\>](#--profile-string)
   - [--tier \<string\>  \[HEVC only\]](#--tier-string--hevc-only)
@@ -233,6 +234,8 @@
 - [Other Options](#other-options)
   - [--parallel \[\<int\>\] or \[\<string\>\]](#--parallel-int-or-string)
   - [--cuda-schedule \<string\>](#--cuda-schedule-string)
+  - [--cuda-stream \<int\>](#--cuda-stream-int)
+  - [--cuda-mt \<int\>](#--cuda-mt-int)
   - [--disable-nvml \<int\>](#--disable-nvml-int)
   - [--disable-nvml](#--disable-nvml)
   - [--output-buf \<int\>](#--output-buf-int)
@@ -824,6 +827,9 @@ It must be in range 1-4 (Last, Last2, last3 and Golden). It's a suggestive value
 pecifies max number of L1 list reference frame used for prediction of a frame. (default: 0 = auto)
 
 It must be in range 1-3 (Backward, Altref2, Altref). It's a suggestive value not necessarily be honored always.
+
+### --bitstream-padding [AV1]
+Enable bitstream padding for AV1 CBR encoding. (default: off)
 
 ### --level &lt;string&gt;
 Specify the Level of the codec to be encoded. If not specified, it will be automatically set.
@@ -3189,6 +3195,20 @@ In most cases, it is recommended to use parallel counts below the encoder count 
   
   - sync
     Sleep a thread until the end of the GPU task. Performance might decrease, but will reduce CPU utilization especially when decoding is done by HW.
+
+### --cuda-stream &lt;int&gt;
+Enable CUDA stream based optimization. Default is 1 (=on).
+
+- Notes
+  - When enabled, it may improve performance by better overlapping GPU tasks.
+  - On some GPUs/drivers, enabling this might cause instability. If you experience hangs or crashes, try disabling this option.
+
+### --cuda-mt &lt;int&gt;
+Enable multi-threaded control for CUDA operations. Default is 0 (=off).
+
+- Notes
+  - When enabled, it may improve performance by parallelizing CUDA control from the host.
+  - On some GPUs/drivers, enabling this might cause instability. If you experience hangs or crashes, try disabling this option.
 
 ### --disable-nvml &lt;int&gt;
 Disable NVML GPU monitoring。
