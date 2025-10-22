@@ -29,9 +29,9 @@
 #ifndef __RGY_CONFIG_H__
 #define __RGY_CONFIG_H__
 
-#define VER_FILEVERSION             0,9,4,2
-#define VER_STR_FILEVERSION          "9.04"
-#define VER_STR_FILEVERSION_TCHAR _T("9.04")
+#define VER_FILEVERSION             0,9,5,0
+#define VER_STR_FILEVERSION          "9.05"
+#define VER_STR_FILEVERSION_TCHAR _T("9.05")
 
 #ifdef _M_IX86
 #define BUILD_ARCH_STR _T("x86")
@@ -62,7 +62,7 @@ const char *get_encoder_version();
 
 #define ENAVLE_LIBAV_DOVI_PARSER 0
 
-#define ENABLE_NVENC_SDK_TUNE 0
+#define ENABLE_NVENC_SDK_TUNE 1
 
 #define ENABLE_NVTX 0
 

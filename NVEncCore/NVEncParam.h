@@ -31,6 +31,7 @@
 
 #include <limits.h>
 #include <vector>
+#include <optional>
 #include "rgy_osdep.h"
 #pragma warning (push)
 #pragma warning (disable: 4819)
@@ -53,7 +54,8 @@ static const int MAX_DECODE_FRAMES = 16;
 
 static const int DEFAULT_GOP_LENGTH  = 0;
 static const int DEFAULT_B_FRAMES    = 3;
-static const int DEFAULT_REF_FRAMES  = 3;
+static const int DEFAULT_REF_FRAMES_H264 = 4;
+static const int DEFAULT_REF_FRAMES  = 5;
 static const int DEFAULT_NUM_SLICES  = 1;
 static const int DEFAUTL_QP_I        = 20;
 static const int DEFAULT_QP_P        = 23;
@@ -799,6 +801,45 @@ struct NVEncRCParam {
 };
 tstring printParams(const std::vector<NVEncRCParam> &dynamicRC);
 
+
+struct NVEncVideoParamH264 {
+    int profile;                                   // default: 0 (auto/unspecified)
+    int level;                                     // default: 0 (auto/unspecified)
+    // coding tools
+    NV_ENC_H264_BDIRECT_MODE bdirect;               // default: NV_ENC_H264_BDIRECT_MODE_AUTOSELECT
+    NV_ENC_H264_ADAPTIVE_TRANSFORM_MODE adaptTrans; // default: NV_ENC_H264_ADAPTIVE_TRANSFORM_AUTOSELECT
+    NV_ENC_H264_ENTROPY_CODING_MODE entropy;        // default: NV_ENC_H264_ENTROPY_CODING_MODE_CABAC
+    int deblockIDC;                                 // default: 0
+    std::optional<int> hierarchicalPFrames;         // default: 0 (off)
+    std::optional<int> hierarchicalBFrames;         // default: 0 (off)
+
+    NVEncVideoParamH264();
+};
+struct NVEncVideoParamHEVC {
+    int profile;                                   // default: 0 (auto/unspecified)
+    int level;                                     // default: 0 (auto/unspecified)
+    int tier;                                      // default: 0 (auto/unspecified)
+    NV_ENC_HEVC_CUSIZE cuMin;                      // *default: NV_ENC_HEVC_CUSIZE_AUTOSELECT
+    NV_ENC_HEVC_CUSIZE cuMax;                      // *default: NV_ENC_HEVC_CUSIZE_AUTOSELECT
+
+    NVEncVideoParamHEVC();
+};
+struct NVEncVideoParamAV1 {
+    int profile;                                   // default: 0 (auto/unspecified)
+    int level;                                     // default: 0 (auto/unspecified)
+    int tier;                                      // default: 0 (auto/unspecified)
+    NV_ENC_AV1_PART_SIZE partMin;                  // default: NV_ENC_AV1_PART_SIZE_AUTOSELECT
+    NV_ENC_AV1_PART_SIZE partMax;                  // default: NV_ENC_AV1_PART_SIZE_AUTOSELECT
+    int tilesCols;                                 // default: 0
+    int tilesRows;                                 // default: 0
+    NV_ENC_NUM_REF_FRAMES fwdRefs;                 // default: NV_ENC_NUM_REF_FRAMES_AUTOSELECT
+    NV_ENC_NUM_REF_FRAMES bwdRefs;                 // default: NV_ENC_NUM_REF_FRAMES_AUTOSELECT
+    std::optional<bool> annexB;                    // outputAnnexBFormat
+    std::optional<bool> disableSeqHdr;             // disableSeqHdr
+
+    NVEncVideoParamAV1();
+};
+
 struct InEncodeVideoParam {
     int deviceID;                 //使用するGPUのID
     int cudaSchedule;
@@ -815,7 +856,7 @@ struct InEncodeVideoParam {
 
     NVEncRCParam rcParam;
     int gopLength;
-    int bFrames;
+    std::optional<int> bFrames;
     NV_ENC_MV_PRECISION mvPrecision;
     RGYQPSet qpInit;
     RGYQPSet qpMin;
@@ -825,21 +866,24 @@ struct InEncodeVideoParam {
     int vbvBufferSize;
     int vbvInitialDelay;
     NV_ENC_MULTI_PASS multipass;
-    bool strictGOP;
-    bool disableIadapt;
-    bool disableBadapt;
-    bool enableAQ;
-    bool enableAQTemporal;
-    bool nonrefP;
-    bool enableLookahead;
-    int lookahead;
-    NV_ENC_LOOKAHEAD_LEVEL lookaheadLevel;
-    int aqStrength;
-    NV_ENC_TEMPORAL_FILTER_LEVEL temporalFilterLevel;
+    std::optional<bool> strictGOP;
+    std::optional<bool> disableIadapt;
+    std::optional<bool> disableBadapt;
+    std::optional<bool> enableAQ;
+    std::optional<bool> enableAQTemporal;
+    std::optional<bool> nonrefP;
+    bool unidirectB;
+    std::optional<bool> enableLookahead;
+    std::optional<int> lookahead;
+    std::optional<NV_ENC_LOOKAHEAD_LEVEL> lookaheadLevel;
+    std::optional<int> aqStrength;
+    std::optional<NV_ENC_TEMPORAL_FILTER_LEVEL> temporalFilterLevel;
     NV_ENC_TUNING_INFO tuningInfo;
-    int temporalLayers;
+    std::optional<int> temporalLayers;
 
-    NV_ENC_CONFIG encConfig;      //エンコード設定
+    NVEncVideoParamH264 h264;
+    NVEncVideoParamHEVC hevc;
+    NVEncVideoParamAV1 av1;
 
     std::vector<NVEncRCParam> dynamicRC;
     RGY_CODEC codec_rgy;          //出力コーデック
@@ -851,11 +895,22 @@ struct InEncodeVideoParam {
     bool temporalSVC;
     int alphaBitrateRatio;
     int alphaChannelMode;
-    int nWeightP;
+    std::optional<int> nWeightP;
     int chromaQPOffset;
     int brefMode;
     NV_ENC_SPLIT_ENCODE_MODE splitEncMode;
     bool bitstreamPadding;
+
+    std::optional<int> maxRef;                       // *-1
+    NV_ENC_NUM_REF_FRAMES refL0;                     // *AUTOSELECT
+    NV_ENC_NUM_REF_FRAMES refL1;                     // *AUTOSELECT
+    int slices;                                      // 0
+    std::optional<bool> enableLTR;                   // *keep optional
+    std::optional<int> ltrNumFrames;                 // * keep optional
+    std::optional<bool> aud;                         // *outputAUD (H.264/HEVC)
+    std::optional<bool> picTimingSEI;                // *outputPictureTimingSEI (H.264/HEVC)
+    std::optional<bool> bufferingPeriodSEI;          // *outputBufferingPeriodSEI (H.264/HEVC)
+    std::optional<bool> repeatHeaders;               // *repeatSPSPPS / repeatSeqHdr
 
     cudaVideoDeinterlaceMode  deinterlace;
 
@@ -876,7 +931,7 @@ static void setQP(NV_ENC_QP& nvencqp, const RGYQPSet& qp) {
     nvencqp.qpInterB = qp.qpB;
 };
 
-NV_ENC_CONFIG DefaultParam();
+// NV_ENC_CONFIG DefaultParam(); // deprecated
 NV_ENC_CODEC_CONFIG DefaultParamH264();
 NV_ENC_CODEC_CONFIG DefaultParamHEVC();
 NV_ENC_CODEC_CONFIG DefaultParamAV1();

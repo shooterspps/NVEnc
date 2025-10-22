@@ -859,6 +859,27 @@ NVENCSTATUS NVEncoder::setCodecPresetList(NVEncCodecFeature& codecFeature, bool 
     return nvStatus;
 }
 
+NVENCSTATUS NVEncoder::getPresetDefaultParams(const GUID &codec, const GUID &profileGUID, const GUID &presetGUID, NV_ENC_TUNING_INFO tuningInfo, NV_ENC_PRESET_CONFIG& presetConfig) {
+    NVENCSTATUS nvStatus = NV_ENC_SUCCESS;
+    INIT_STRUCT(presetConfig);
+    setStructVer(presetConfig);
+    setStructVer(presetConfig.presetCfg);
+    setStructVer(presetConfig.presetCfg.rcParams);
+    if (checkAPIver(10, 0)) {
+        if (NV_ENC_SUCCESS == (nvStatus = m_pEncodeAPI->nvEncGetEncodePresetConfigEx(m_hEncoder, codec, presetGUID, tuningInfo, &presetConfig))) {
+            presetConfig.presetCfg.profileGUID = profileGUID;
+            return nvStatus;
+        }
+        NVPrintFuncError(_T("nvEncGetEncodePresetConfigEx"), nvStatus);
+    }
+    if (NV_ENC_SUCCESS != (nvStatus = m_pEncodeAPI->nvEncGetEncodePresetConfig(m_hEncoder, codec, presetGUID, &presetConfig))) {
+        NVPrintFuncError(_T("nvEncGetEncodePresetConfig"), nvStatus);
+        return nvStatus;
+    }
+    presetConfig.presetCfg.profileGUID = profileGUID;
+    return nvStatus;
+}
+
 NVENCSTATUS NVEncoder::setInputFormatList(NVEncCodecFeature& codecFeature) {
     NVENCSTATUS nvStatus = NV_ENC_SUCCESS;
     uint32_t dwInputFmtCount = 0;
@@ -1202,16 +1223,23 @@ RGY_ERR NVGPUInfo::initDevice(int deviceID, CUctx_flags ctxFlags, bool error_if_
 
     writeLog(RGY_LOG_DEBUG, _T("using cuda schedule mode: %s.\n"), get_chr_from_value(list_cuda_schedule, ctxFlags));
     CUcontext cuCtxCreated;
+#if CUDA_VERSION >= 13000
+    CUctxCreateParams ctxCreateParams = {};
+    if (CUDA_SUCCESS != (cuResult = cuCtxCreate(&cuCtxCreated, &ctxCreateParams, ctxFlags, cuDevice))) {
+#else
     if (CUDA_SUCCESS != (cuResult = cuCtxCreate(&cuCtxCreated, ctxFlags, cuDevice))) {
+#endif
         if (ctxFlags != 0) {
             writeLog(RGY_LOG_WARN, _T("cuCtxCreate error:0x%x (%s)\n"), cuResult, char_to_tstring(_cudaGetErrorEnum(cuResult)).c_str());
             writeLog(RGY_LOG_WARN, _T("retry cuCtxCreate with auto scheduling mode.\n"));
+#if CUDA_VERSION >= 13000
+            CUctxCreateParams ctxCreateParamsRetry = {};
+            if (CUDA_SUCCESS != (cuResult = cuCtxCreate(&cuCtxCreated, &ctxCreateParams, 0, cuDevice))) {
+#else
             if (CUDA_SUCCESS != (cuResult = cuCtxCreate(&cuCtxCreated, 0, cuDevice))) {
+#endif
                 writeLog(RGY_LOG_ERROR, _T("cuCtxCreate error:0x%x (%s)\n"), cuResult, char_to_tstring(_cudaGetErrorEnum(cuResult)).c_str());
-                return RGY_ERR_DEVICE_NOT_FOUND;
             }
-        } else {
-            writeLog(RGY_LOG_ERROR, _T("cuCtxCreate error:0x%x (%s)\n"), cuResult, char_to_tstring(_cudaGetErrorEnum(cuResult)).c_str());
             return RGY_ERR_CUDA;
         }
     }
